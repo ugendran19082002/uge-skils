@@ -5,7 +5,7 @@ description: >-
   Produce defensible effort and cost estimates with explicit ranges and assumptions.
 category: Product
 version: 1.0.0
-updated: 2026-06-17
+updated: 2026-06-19
 license: Apache-2.0
 openspec:
   spec_version: "1.0"

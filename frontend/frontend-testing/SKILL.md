@@ -5,7 +5,7 @@ description: >-
   Build a layered frontend test strategy that catches regressions cheaply.
 category: Frontend
 version: 1.0.0
-updated: 2026-06-17
+updated: 2026-06-19
 license: Apache-2.0
 openspec:
   spec_version: "1.0"
@@ -45,7 +45,7 @@ source of truth.
 
 - Test pyramid for the frontend and what each layer owns
 - Component testing with user-centric queries
-- Mocking network (MSW) and test data strategy
+- Mocking the network at the boundary and test-data strategy
 - Visual-regression and accessibility testing
 - Flake control, determinism, and CI integration
 

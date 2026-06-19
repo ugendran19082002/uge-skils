@@ -23,7 +23,7 @@
 
 - [ ] Addressed: test pyramid for the frontend and what each layer owns
 - [ ] Addressed: component testing with user-centric queries
-- [ ] Addressed: mocking network (MSW) and test data strategy
+- [ ] Addressed: mocking the network at the boundary and test-data strategy
 - [ ] Addressed: visual-regression and accessibility testing
 - [ ] Addressed: flake control, determinism, and CI integration
 

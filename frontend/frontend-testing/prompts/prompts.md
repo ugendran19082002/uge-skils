@@ -16,7 +16,7 @@ You are an expert in frontend testing. Given this context:
 Identify the goals, constraints, stakeholders, success criteria, and key unknowns. Pay particular attention to these focus areas:
 - Test pyramid for the frontend and what each layer owns
 - Component testing with user-centric queries
-- Mocking network (MSW) and test data strategy
+- Mocking the network at the boundary and test-data strategy
 - Visual-regression and accessibility testing
 - Flake control, determinism, and CI integration
 List what you still need to know before proceeding.

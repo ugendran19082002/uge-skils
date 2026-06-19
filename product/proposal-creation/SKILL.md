@@ -5,7 +5,7 @@ description: >-
   Craft persuasive, accurate proposals that win approval and set correct expectations.
 category: Product
 version: 1.0.0
-updated: 2026-06-17
+updated: 2026-06-19
 license: Apache-2.0
 openspec:
   spec_version: "1.0"

@@ -5,7 +5,7 @@ description: >-
   Store, rotate, and access secrets securely across the lifecycle.
 category: DevOps & Platform
 version: 1.0.0
-updated: 2026-06-17
+updated: 2026-06-19
 license: Apache-2.0
 openspec:
   spec_version: "1.0"
@@ -43,7 +43,7 @@ source of truth.
 
 ## Capabilities & Focus Areas
 
-- Secret store selection (Vault, cloud KMS/SM)
+- Secret store selection (a dedicated secrets manager or cloud KMS)
 - Dynamic/short-lived secrets and rotation
 - Access control, scoping, and auditing
 - Injection into apps/CI without exposure

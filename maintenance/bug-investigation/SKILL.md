@@ -5,7 +5,7 @@ description: >-
   Investigate bugs to a confirmed root cause with a regression test.
 category: Maintenance & Operations
 version: 1.0.0
-updated: 2026-06-17
+updated: 2026-06-19
 license: Apache-2.0
 openspec:
   spec_version: "1.0"

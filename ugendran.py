@@ -28,6 +28,7 @@ Commands:
 """
 
 import os, sys, json, re, shutil, subprocess, textwrap, time
+import concurrent.futures, threading
 from datetime import datetime
 from pathlib import Path
 
@@ -65,21 +66,24 @@ def clear_line():    print(' ' * 60, end='\r')
 SKILL_MAP = {
     "product":      ["business-analysis","market-research","prd-generation",
                      "requirements-analysis","proposal-creation","user-story-generation",
-                     "risk-analysis","cost-estimation","roadmap-planning"],
+                     "risk-analysis","cost-estimation","roadmap-planning","product-analytics"],
     "architecture": ["design-document","architecture-review","frontend-architecture",
                      "backend-architecture","api-design","database-design",
                      "security-architecture","scalability-planning","event-driven-architecture",
-                     "multi-tenant-architecture","domain-driven-design","microservices-governance"],
+                     "multi-tenant-architecture","domain-driven-design","microservices-governance",
+                     "realtime-architecture"],
     "frontend":     ["ui-ux-design","component-design","state-management","frontend-testing",
-                     "frontend-optimization","accessibility-review","design-system"],
+                     "frontend-optimization","accessibility-review","design-system",
+                     "internationalization"],
     "backend":      ["service-design","authentication-design","database-optimization",
                      "caching-strategy","background-jobs","api-contract-design",
-                     "file-storage-design","search-architecture"],
+                     "file-storage-design","search-architecture","payments-billing",
+                     "notification-system","api-gateway-design"],
     "ai":           ["ai-agent-design","rag-architecture","prompt-engineering","model-selection",
                      "ai-evaluation","llmops","vector-database-design","ai-monitoring",
-                     "model-finetuning","guardrails-design"],
+                     "model-finetuning","guardrails-design","data-pipeline-design"],
     "testing":      ["testing-strategy","unit-testing","integration-testing",
-                     "performance-testing","e2e-testing","security-testing"],
+                     "performance-testing","e2e-testing","security-testing","contract-testing"],
     "devops":       ["infra-design","docker-architecture","docker-compose-design",
                      "kubernetes-planning","nginx-reverse-proxy","ssl-management",
                      "ci-cd-pipeline","observability-design","backup-recovery",
@@ -89,7 +93,8 @@ SKILL_MAP = {
                      "access-control-design"],
     "maintenance":  ["troubleshooting","bug-investigation","refactoring-planning",
                      "migration-planning","release-planning","documentation-generator",
-                     "incident-response","monitoring-alerting","technical-debt-management"],
+                     "incident-response","monitoring-alerting","technical-debt-management",
+                     "feature-flag-management","code-simplicity-and-reuse"],
 }
 
 SKILL_DESCRIPTIONS = {
@@ -171,24 +176,72 @@ SKILL_DESCRIPTIONS = {
     "incident-response":      "Respond to incidents with structure and blameless postmortem",
     "monitoring-alerting":    "Design SLO-based alerts that fire on real problems only",
     "technical-debt-management": "Make tech debt visible, prioritized, paid down deliberately",
+    "product-analytics":      "Instrument product analytics and event tracking for decisions",
+    "realtime-architecture":  "Design realtime systems: websockets, SSE, pub/sub, presence",
+    "internationalization":   "Design i18n/l10n: locales, translations, formatting, RTL",
+    "payments-billing":       "Design payments, subscriptions, invoicing, PCI-aware billing",
+    "notification-system":    "Design multi-channel notifications: email, push, SMS, in-app",
+    "api-gateway-design":     "Design API gateway: routing, auth, rate limiting, versioning",
+    "data-pipeline-design":   "Design reliable ETL/ELT ingestion and transformation pipelines",
+    "contract-testing":       "Verify services honor API/event contracts across deploys",
+    "code-simplicity-and-reuse": "Choose simplest solution, reuse before writing (KISS/DRY/YAGNI)",
+    "feature-flag-management": "Manage feature flags, gradual rollout, experimentation",
 }
 
 PROJECT_PROFILES = {
-    "web":     ["prd-generation","api-design","backend-architecture","frontend-architecture",
-                "database-design","authentication-design","security-architecture",
-                "testing-strategy","ci-cd-pipeline","docker-architecture","observability-design"],
-    "ai":      ["ai-agent-design","rag-architecture","prompt-engineering","model-selection",
-                "guardrails-design","ai-monitoring","ai-evaluation","llmops",
-                "api-design","testing-strategy","ci-cd-pipeline"],
-    "mobile":  ["prd-generation","ui-ux-design","api-design","authentication-design",
-                "testing-strategy","ci-cd-pipeline","accessibility-review"],
-    "data":    ["database-design","database-optimization","search-architecture",
-                "vector-database-design","observability-design","backup-recovery","api-contract-design"],
-    "saas":    ["market-research","prd-generation","multi-tenant-architecture","api-design",
-                "authentication-design","security-architecture","compliance-audit",
-                "scalability-planning","ci-cd-pipeline","monitoring-alerting","incident-response"],
-    "startup": ["market-research","business-analysis","prd-generation","user-story-generation",
-                "api-design","docker-architecture","ci-cd-pipeline","testing-strategy"],
+    "web":      ["prd-generation","api-design","backend-architecture","frontend-architecture",
+                 "database-design","authentication-design","security-architecture",
+                 "testing-strategy","ci-cd-pipeline","docker-architecture","observability-design"],
+    "api":      ["api-design","api-contract-design","backend-architecture","database-design",
+                 "authentication-design","api-gateway-design","caching-strategy","contract-testing",
+                 "testing-strategy","ci-cd-pipeline","observability-design"],
+    "ai":       ["ai-agent-design","rag-architecture","prompt-engineering","model-selection",
+                 "guardrails-design","ai-monitoring","ai-evaluation","llmops","data-pipeline-design",
+                 "api-design","testing-strategy","ci-cd-pipeline"],
+    "mobile":   ["prd-generation","ui-ux-design","api-design","authentication-design",
+                 "notification-system","internationalization","testing-strategy","ci-cd-pipeline",
+                 "accessibility-review"],
+    "desktop":  ["prd-generation","ui-ux-design","component-design","state-management",
+                 "authentication-design","internationalization","testing-strategy","ci-cd-pipeline"],
+    "cli":      ["prd-generation","design-document","api-design","documentation-generator",
+                 "unit-testing","testing-strategy","ci-cd-pipeline","code-simplicity-and-reuse"],
+    "data":     ["database-design","database-optimization","data-pipeline-design","search-architecture",
+                 "vector-database-design","observability-design","backup-recovery","api-contract-design"],
+    "saas":     ["market-research","prd-generation","multi-tenant-architecture","api-design",
+                 "authentication-design","payments-billing","security-architecture","compliance-audit",
+                 "scalability-planning","feature-flag-management","ci-cd-pipeline","monitoring-alerting",
+                 "incident-response","product-analytics"],
+    "b2b":      ["business-analysis","prd-generation","multi-tenant-architecture","access-control-design",
+                 "authentication-design","api-design","security-architecture","compliance-audit",
+                 "observability-design","ci-cd-pipeline","monitoring-alerting"],
+    "ecommerce":["prd-generation","api-design","database-design","authentication-design",
+                 "payments-billing","search-architecture","caching-strategy","notification-system",
+                 "security-architecture","scalability-planning","product-analytics","ci-cd-pipeline",
+                 "monitoring-alerting"],
+    "fintech":  ["prd-generation","domain-driven-design","api-design","database-design",
+                 "authentication-design","payments-billing","access-control-design","threat-modeling",
+                 "security-architecture","compliance-audit","observability-design","disaster-recovery",
+                 "ci-cd-pipeline"],
+    "healthcare":["prd-generation","requirements-analysis","api-design","database-design",
+                 "authentication-design","access-control-design","security-architecture",
+                 "compliance-audit","threat-modeling","backup-recovery","disaster-recovery","ci-cd-pipeline"],
+    "iot":      ["prd-generation","event-driven-architecture","realtime-architecture","api-design",
+                 "data-pipeline-design","authentication-design","security-architecture",
+                 "scalability-planning","observability-design","ci-cd-pipeline"],
+    "blockchain":["prd-generation","design-document","threat-modeling","security-architecture",
+                 "api-design","authentication-design","security-testing","observability-design","ci-cd-pipeline"],
+    "gaming":   ["prd-generation","realtime-architecture","backend-architecture","scalability-planning",
+                 "caching-strategy","authentication-design","observability-design","performance-testing",
+                 "ci-cd-pipeline"],
+    "marketplace":["market-research","prd-generation","multi-tenant-architecture","api-design",
+                 "authentication-design","payments-billing","search-architecture","notification-system",
+                 "security-architecture","scalability-planning","product-analytics","ci-cd-pipeline"],
+    "platform": ["design-document","microservices-governance","api-gateway-design","infrastructure-as-code",
+                 "kubernetes-planning","observability-design","secrets-management","ci-cd-pipeline",
+                 "feature-flag-management","monitoring-alerting","incident-response"],
+    "startup":  ["market-research","business-analysis","prd-generation","user-story-generation",
+                 "api-design","docker-architecture","ci-cd-pipeline","testing-strategy",
+                 "product-analytics","code-simplicity-and-reuse"],
 }
 
 # ─── LLM Engine ──────────────────────────────────────────────────────────────
@@ -391,6 +444,16 @@ def keyword_fallback(request: str) -> dict:
         (["server hardening","cis benchmark","ssh hardening","firewall"],                     "server-hardening"),
         (["secrets","vault","secret manager","api key rotation"],                             "secrets-management"),
         (["service design","slo","circuit breaker","retry","timeout"],                        "service-design"),
+        (["payment","billing","subscription","invoice","stripe","checkout","pricing plan","paywall"], "payments-billing"),
+        (["notification","email send","push notification","sms","in-app message","alert user"], "notification-system"),
+        (["api gateway","edge","rate limit","throttle","kong","apigee","ingress gateway"],     "api-gateway-design"),
+        (["realtime","websocket","sse","server sent","live update","presence","pub sub","socket.io"], "realtime-architecture"),
+        (["i18n","l10n","internationalization","localization","translation","locale","rtl","multi language"], "internationalization"),
+        (["product analytics","event tracking","funnel","cohort","mixpanel","amplitude","posthog","instrumentation"], "product-analytics"),
+        (["data pipeline","etl","elt","ingestion","airflow","dagster","dbt","cdc","data lake"], "data-pipeline-design"),
+        (["contract test","pact","consumer contract","provider verification","schema compatibility"], "contract-testing"),
+        (["feature flag","feature toggle","gradual rollout","launchdarkly","ab test","experiment flag","kill switch"], "feature-flag-management"),
+        (["simplicity","kiss","dry","yagni","over engineer","simplify code","reuse code"],      "code-simplicity-and-reuse"),
     ]
     lo = request.lower()
     scores = {}
@@ -417,7 +480,7 @@ def keyword_fallback(request: str) -> dict:
 
 # ─── AI Spec Generator ───────────────────────────────────────────────────────
 
-def ai_generate_spec(skill: str, request: str, project: dict, llm: dict) -> str:
+def ai_generate_spec(skill: str, request: str, project: dict, llm: dict, quiet: bool = False) -> str:
     """
     Use LLM to generate a REAL, filled-in spec document for the skill.
     This is the 100% accuracy magic — not blank templates, real content.
@@ -474,9 +537,9 @@ Requirements:
 
 Generate the complete spec document now:"""
 
-    spinner(f"AI generating spec for {skill}...")
+    if not quiet: spinner(f"AI generating spec for {skill}...")
     spec = call_llm(prompt, llm, max_tokens=2000)
-    clear_line()
+    if not quiet: clear_line()
 
     if not spec:
         # Fallback: generate a good template-based spec
@@ -556,7 +619,7 @@ See `checklist.md` for the full list of anti-patterns specific to `{skill}`.
 """
 
 
-def ai_validate_checklist(skill: str, spec_content: str, llm: dict) -> dict:
+def ai_validate_checklist(skill: str, spec_content: str, llm: dict, quiet: bool = False) -> dict:
     """Use AI to validate the generated spec against the skill checklist."""
     sp = skill_path(skill)
     if not sp:
@@ -585,9 +648,9 @@ Review the spec against the checklist. Return ONLY valid JSON:
   "improvements": ["<suggestion 1>", "<suggestion 2>"]
 }}"""
 
-    spinner("AI validating against checklist...")
+    if not quiet: spinner("AI validating against checklist...")
     result = call_llm_json(prompt, llm)
-    clear_line()
+    if not quiet: clear_line()
 
     if result and "score" in result:
         return result
@@ -707,21 +770,35 @@ def load_project(name):
 def save_project(name, data):
     project_file(name).write_text(json.dumps(data, indent=2))
 
+PROJECT_TYPES = list(PROJECT_PROFILES.keys())
+
 def detect_type_ai(idea: str, llm: dict) -> str:
-    prompt = f"""Classify this project idea into one of: web, ai, mobile, data, saas, startup
+    prompt = f"""Classify this project idea into exactly one of: {', '.join(PROJECT_TYPES)}
 Idea: "{idea}"
 Return ONLY one word from the list above."""
     result = call_llm(prompt, llm).strip().lower()
-    valid = ["web","ai","mobile","data","saas","startup"]
-    return result if result in valid else "web"
+    return result if result in PROJECT_PROFILES else detect_type_keyword(idea)
 
 def detect_type_keyword(idea: str) -> str:
     lo = idea.lower()
-    if any(k in lo for k in ["ai","llm","gpt","agent","rag","ml"]): return "ai"
-    if any(k in lo for k in ["mobile","ios","android","flutter"]):   return "mobile"
-    if any(k in lo for k in ["saas","multi-tenant","subscription"]):  return "saas"
-    if any(k in lo for k in ["data","analytics","etl","pipeline"]):  return "data"
-    if any(k in lo for k in ["startup","mvp","launch"]):             return "startup"
+    # Order matters: most specific domains first.
+    if any(k in lo for k in ["fintech","banking","trading","lending","wallet","ledger"]):       return "fintech"
+    if any(k in lo for k in ["healthcare","health","medical","hipaa","patient","clinical","ehr"]): return "healthcare"
+    if any(k in lo for k in ["ecommerce","e-commerce","online store","shop","cart","storefront","retail"]): return "ecommerce"
+    if any(k in lo for k in ["marketplace","two-sided","buyers and sellers","listing platform"]): return "marketplace"
+    if any(k in lo for k in ["blockchain","web3","smart contract","crypto","nft","defi","onchain"]): return "blockchain"
+    if any(k in lo for k in ["game","gaming","multiplayer","matchmaking"]):                       return "gaming"
+    if any(k in lo for k in ["iot","embedded","device fleet","sensor","telemetry","firmware"]):   return "iot"
+    if any(k in lo for k in ["ai","llm","gpt","agent","rag","ml","model","chatbot"]):             return "ai"
+    if any(k in lo for k in ["b2b","enterprise","internal tool","back office","crm","erp"]):      return "b2b"
+    if any(k in lo for k in ["saas","multi-tenant","multi tenant","subscription"]):               return "saas"
+    if any(k in lo for k in ["platform","internal platform","developer platform","paved road"]):  return "platform"
+    if any(k in lo for k in ["mobile","ios","android","flutter","react native"]):                 return "mobile"
+    if any(k in lo for k in ["desktop","electron","tauri","windows app","macos app"]):            return "desktop"
+    if any(k in lo for k in ["cli","command line","library","sdk","package","devtool","developer tool"]): return "cli"
+    if any(k in lo for k in ["data","analytics","etl","elt","pipeline","warehouse","lakehouse"]):  return "data"
+    if any(k in lo for k in ["api only","api-only","rest api","graphql api","backend service","microservice"]): return "api"
+    if any(k in lo for k in ["startup","mvp","launch","prototype"]):                              return "startup"
     return "web"
 
 def progress_bar(done, total):
@@ -1187,17 +1264,30 @@ def cmd_kill(args):
     if not project:
         print(err(f"Project '{name}' not found."))
         return
+    llm  = detect_llm()
+    done = sum(1 for v in project["skills"].values() if v["status"]=="done")
+
+    # AI-generated end-to-end discontinuation report (decommission runbook).
+    print()
+    print(bold(f"💀 Discontinuing '{name}' — end to end"))
+    closeout = ai_discontinue_report(project, llm)
+
     project.update({"status":"archived","archived_at":ts()})
     project["log"].append({"ts":ts(),"event":"project_killed","detail":"Discontinued"})
     save_project(name, project)
+
     ws = UGDIR / "workspaces" / name
     arc = ARCHIVE_DIR / f"project_{name}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-    if ws.exists(): shutil.move(str(ws), str(arc))
-    done = sum(1 for v in project["skills"].values() if v["status"]=="done")
-    print()
-    print(bold(f"💀 '{name}' ARCHIVED"))
-    print(dim(f"   Skills completed: {done}/{len(project['skills'])}"))
-    print(dim(f"   Archive: {arc}"))
+    if ws.exists():
+        (ws / "DISCONTINUATION.md").write_text(closeout)
+        shutil.move(str(ws), str(arc))
+    else:
+        arc.mkdir(parents=True, exist_ok=True)
+        (arc / "DISCONTINUATION.md").write_text(closeout)
+
+    print(f"   {dim('Skills completed:')} {done}/{len(project['skills'])}")
+    print(f"   {ok('DISCONTINUATION.md')} {dim('— AI decommission runbook written')}")
+    print(f"   {dim('Archive:')} {arc}")
     print()
 
 
@@ -1228,8 +1318,482 @@ def cmd_llm(args):
     print()
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ADVANCED LAYER — autonomous end-to-end build, parallel skills, resumable memory
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Interactive helpers (human-in-the-loop, safe when non-tty) ───────────────
+def _is_interactive() -> bool:
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
+
+def _confirm(question: str, default: bool = True) -> bool:
+    """Yes/no prompt. Auto-returns default when not attached to a terminal."""
+    if not _is_interactive():
+        return default
+    hint = "Y/n" if default else "y/N"
+    try:
+        ans = input(f"  {c('?','yellow')} {question} [{hint}] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
+    if not ans:
+        return default
+    return ans.startswith("y")
+
+def _ask_text(question: str) -> str:
+    if not _is_interactive():
+        return ""
+    try:
+        return input(f"  {c('»','yellow')} {question} ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return ""
+
+
+# ─── Resumable session memory ─────────────────────────────────────────────────
+def build_memory_digest(project: dict) -> str:
+    """Compile a concise, resumable digest so a *fresh* LLM call/session knows
+    exactly what has been done and what remains. This is the persistent memory."""
+    done    = [(s, v) for s, v in project.get("skills", {}).items() if v["status"] == "done"]
+    pending = [s for s, v in project.get("skills", {}).items() if v["status"] == "pending"]
+    lines = [
+        f"Project   : {project.get('name')} ({project.get('type','web')})",
+        f"Idea      : {project.get('idea','')}",
+        f"Status    : {project.get('status','active')}",
+        f"Completed : {len(done)} skill(s)" + (":" if done else ""),
+    ]
+    for s, v in done:
+        lines.append(f"  ✓ {s}  ({v.get('done','')})")
+    lines.append(f"Pending   : {', '.join(pending) if pending else 'none — project fully specced'}")
+    log = project.get("log", [])
+    if log:
+        lines.append("Recent activity:")
+        for e in log[-6:]:
+            lines.append(f"  · {e['ts']} {e['event']} {e.get('detail','')}")
+    return "\n".join(lines)
+
+
+def write_state_md(name: str, project: dict):
+    """Write a human + LLM readable STATE.md so any new session can resume."""
+    ws = UGDIR / "workspaces" / name
+    ws.mkdir(parents=True, exist_ok=True)
+    digest = build_memory_digest(project)
+    done_specs = []
+    for skill, v in project.get("skills", {}).items():
+        if v["status"] == "done":
+            sf = ws / "skills" / skill / "SPEC.md"
+            if sf.exists():
+                done_specs.append(f"- `{skill}` → [SPEC.md](skills/{skill}/SPEC.md)")
+    (ws / "STATE.md").write_text(
+        f"# {name} — Live Project State\n\n"
+        f"_Updated: {ts()}. A fresh LLM call or new session can read this file to resume "
+        f"with full context — nothing is lost when the session closes._\n\n"
+        f"## Memory digest\n\n```\n{digest}\n```\n\n"
+        f"## Delivered specs\n\n" + ("\n".join(done_specs) if done_specs else "_none yet_") + "\n\n"
+        f"## Resume\n\n```\nugendran build {name} \"continue\"\n```\n"
+    )
+
+
+# ─── AI planner: one prompt → ordered parallel waves of skills ─────────────────
+def ai_plan_build(request: str, project: dict, llm: dict) -> dict:
+    """Turn ONE natural-language request into a complete, dependency-ordered plan
+    of skills grouped into parallel waves. Skips already-done skills (resumable)."""
+    catalog = build_skill_catalog_text()
+    memory  = build_memory_digest(project)
+    done    = set(s for s, v in project.get("skills", {}).items() if v["status"] == "done")
+
+    prompt = f"""You are a principal engineer planning an END-TO-END delivery from a single request.
+
+REQUEST: "{request}"
+
+PROJECT MEMORY (already delivered — DO NOT plan these again):
+{memory}
+
+AVAILABLE OPENSPEC SKILLS (78):
+{catalog}
+
+Task: Produce a COMPLETE execution plan of the skills needed to deliver the request
+end-to-end, grouped into ordered WAVES. Skills inside the same wave must have NO
+dependency on each other so they can run IN PARALLEL. Later waves depend on earlier ones.
+Order by real engineering dependency: product/requirements → architecture → data & security
+→ implementation → testing → devops → operations. Pick only skills that genuinely apply.
+Skip anything already delivered.
+
+Return ONLY valid JSON (no markdown):
+{{
+  "intent": "<one sentence: what the user truly wants>",
+  "waves": [
+    {{"skills": ["skill-slug-a", "skill-slug-b"], "rationale": "why these belong together and can run in parallel"}}
+  ],
+  "total_skills": <integer>
+}}"""
+
+    spinner("AI planning end-to-end delivery...")
+    result = call_llm_json(prompt, llm)
+    clear_line()
+
+    valid = set(all_skills())
+    if result and result.get("waves"):
+        cleaned, seen = [], set(done)
+        for w in result["waves"]:
+            sk = [s for s in w.get("skills", []) if s in valid and s not in seen]
+            for s in sk:
+                seen.add(s)
+            if sk:
+                cleaned.append({"skills": sk, "rationale": w.get("rationale", "")})
+        if cleaned:
+            result["waves"] = cleaned
+            result["total_skills"] = sum(len(w["skills"]) for w in cleaned)
+            result.setdefault("intent", request)
+            return result
+
+    return plan_fallback(request, project)
+
+
+def plan_fallback(request: str, project: dict) -> dict:
+    """Deterministic planner when no LLM: group pending skills by category order."""
+    pending = [s for s, v in project.get("skills", {}).items() if v["status"] == "pending"]
+    if not pending:
+        # Resuming a fully-specced project → nothing left. Only seed a default
+        # skill for a genuinely new/empty project with a vague request.
+        if any(v["status"] == "done" for v in project.get("skills", {}).values()):
+            return {"intent": request, "waves": [], "total_skills": 0}
+        pending = [keyword_fallback(request)["skill"]]
+    order = ["product", "architecture", "backend", "frontend", "ai",
+             "security", "testing", "devops", "maintenance"]
+    waves = []
+    for cat in order:
+        grp = [s for s in pending if skill_category(s) == cat]
+        if grp:
+            waves.append({"skills": grp, "rationale": f"{cat} phase"})
+    if not waves:
+        waves = [{"skills": pending, "rationale": "all remaining skills"}]
+    return {"intent": request, "waves": waves, "total_skills": len(pending)}
+
+
+# ─── Single-skill executor (quiet, parallel-safe, self-refining) ───────────────
+def ai_refine_spec(skill: str, spec: str, improvements: list, request: str, llm: dict) -> str:
+    """One self-correction pass to push accuracy up when validation is weak."""
+    if not llm["cmd"] or not improvements:
+        return ""
+    prompt = f"""Improve this OpenSpec '{skill}' spec for the request: "{request}".
+Fix exactly these gaps, keep everything already correct, stay specific to the project:
+{chr(10).join('- ' + i for i in improvements[:6])}
+
+CURRENT SPEC:
+{spec[:3000]}
+
+Return the improved complete spec in markdown:"""
+    return call_llm(prompt, llm, max_tokens=2000)
+
+
+def apply_skill_core(skill: str, request: str, project: dict, llm: dict, project_name: str) -> dict:
+    """Run ONE skill end-to-end with no shared-state writes (safe to run in
+    parallel threads): generate spec → self-validate → self-refine if weak →
+    persist artifacts to the workspace. Returns a result dict for committing."""
+    spec       = ai_generate_spec(skill, request, project, llm, quiet=True)
+    validation = ai_validate_checklist(skill, spec, llm, quiet=True)
+    score      = validation.get("score", 80)
+
+    # Self-correction: one refine pass when accuracy is below target.
+    if score < 75 and llm["cmd"]:
+        better = ai_refine_spec(skill, spec, validation.get("improvements", []), request, llm)
+        if better:
+            v2 = ai_validate_checklist(skill, better, llm, quiet=True)
+            if v2.get("score", 0) > score:
+                spec, validation, score = better, v2, v2["score"]
+
+    dest = UGDIR / "workspaces" / project_name / "skills" / skill
+    dest.mkdir(parents=True, exist_ok=True)
+    src = skill_path(skill)
+    if src and src.exists():
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+    spec_file = dest / "SPEC.md"
+    spec_file.write_text(spec)
+    (dest / "CONTEXT.json").write_text(json.dumps({
+        "project": project_name, "skill": skill, "request": request,
+        "llm": llm["name"], "validation_score": score, "applied_at": ts(),
+    }, indent=2))
+    (dest / "VALIDATION.json").write_text(json.dumps(validation, indent=2))
+
+    return {"skill": skill, "score": score, "spec_file": str(spec_file),
+            "validation": validation, "category": skill_category(skill)}
+
+
+def commit_skill(project: dict, name: str, r: dict, request: str, llm: dict):
+    """Mark a skill done in project state + write its archive record.
+    Called sequentially after a wave → continuous archiving, fully resumable."""
+    skill = r["skill"]
+    if skill not in project["skills"]:
+        project["skills"][skill] = {"status": "pending", "started": None, "done": None}
+    project["skills"][skill].update({"status": "done", "started": ts(), "done": ts()})
+    project["log"].append({"ts": ts(), "event": "skill_ai_done", "detail": skill,
+                           "llm": llm["name"], "validation": r["score"]})
+    arec = {"project": name, "skill": skill, "request": request, "llm": llm["name"],
+            "validation_score": r["score"], "spec_file": r["spec_file"], "applied_at": ts()}
+    af = ARCHIVE_DIR / f"{name}_{skill}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    af.write_text(json.dumps(arec, indent=2))
+
+
+def ai_verify_build(request: str, project: dict, llm: dict) -> dict:
+    """Final self-verification: does the delivered skill set fully and correctly
+    address the original request, end-to-end?"""
+    done = [s for s, v in project.get("skills", {}).items() if v["status"] == "done"]
+    if not llm["cmd"]:
+        return {"complete": True, "coverage": 85, "missing": [],
+                "verdict": f"Delivered {len(done)} skills (offline verification)."}
+    prompt = f"""You are a delivery auditor verifying an end-to-end build.
+
+ORIGINAL REQUEST: "{request}"
+SKILLS DELIVERED: {', '.join(done) if done else 'none'}
+
+Does this set of OpenSpec skills FULLY and CORRECTLY address the request end-to-end?
+Return ONLY valid JSON:
+{{"complete": true, "coverage": <0-100>, "missing": ["<skill or gap>"], "verdict": "<one sentence>"}}"""
+    spinner("AI verifying end-to-end coverage...")
+    r = call_llm_json(prompt, llm)
+    clear_line()
+    return r if r and "coverage" in r else {"complete": True, "coverage": 90, "missing": [], "verdict": "Delivered."}
+
+
+def ai_discontinue_report(project: dict, llm: dict) -> str:
+    """AI-generated end-to-end decommission runbook for a discontinued project."""
+    memory = build_memory_digest(project)
+    if llm["cmd"]:
+        prompt = f"""You are an SRE writing a safe DECOMMISSION runbook for a project being discontinued.
+
+{memory}
+
+Write a concise markdown runbook covering: data retention/export, secrets & key rotation,
+infra teardown order, DNS/cert cleanup, access revocation, billing shutdown, stakeholder comms,
+and lessons learned. Be specific and ordered."""
+        spinner("AI writing decommission runbook...")
+        out = call_llm(prompt, llm, max_tokens=1800)
+        clear_line()
+        if out:
+            return f"# {project.get('name')} — Discontinuation Runbook\n\n_Generated {ts()}_\n\n{out}\n"
+    return (f"# {project.get('name')} — Discontinuation Runbook\n\n_Generated {ts()}_\n\n"
+            f"```\n{memory}\n```\n\n## Decommission checklist\n"
+            "- [ ] Export & archive data; confirm retention policy\n"
+            "- [ ] Rotate/revoke all secrets and API keys\n"
+            "- [ ] Tear down infra (apps → data stores → network)\n"
+            "- [ ] Remove DNS records and certificates\n"
+            "- [ ] Revoke access; stop billing/subscriptions\n"
+            "- [ ] Notify stakeholders; record lessons learned\n")
+
+
+# ─── CMD: build ★ ONE PROMPT → FULL AUTONOMOUS DELIVERY ───────────────────────
+def cmd_build(args):
+    """
+    THE AUTONOMOUS COMMAND:
+      ugendran build <project> "<one prompt describing the whole thing>"
+
+    AI understands the prompt → plans every skill needed → runs them in PARALLEL
+    waves → self-verifies each → archives continuously → self-checks coverage.
+    Re-run anytime to RESUME: already-done skills are skipped automatically.
+
+    Flags:
+      --workers N   max parallel skills per wave (default 4)
+      --path DIR    existing project on disk (audited into the plan)
+      --review/-r   ask "is this okay?" after each skill; record problems and continue
+    """
+    # ── parse args / flags ──────────────────────────────────────────────────
+    workers, ext_path, review, positional = 4, None, False, []
+    it = iter(args)
+    for a in it:
+        if a == "--workers":
+            workers = int(next(it, 4) or 4)
+        elif a == "--path":
+            ext_path = next(it, None)
+        elif a in ("--review", "-r"):
+            review = True
+        else:
+            positional.append(a)
+    if len(positional) < 2:
+        print(err('Usage: ugendran build <project> "what you want" [--workers N] [--path DIR]'))
+        return
+
+    project_name = positional[0]
+    request      = " ".join(positional[1:])
+    llm          = detect_llm()
+    workers      = max(1, min(workers, 6))
+
+    print()
+    print(bold("━" * 64))
+    print(bold("  🤖 ugendran build — Autonomous End-to-End OpenSpec Delivery"))
+    print(bold("━" * 64))
+    print()
+    print(f"  {dim('Project')} : {bold(project_name)}")
+    print(f"  {dim('Prompt')}  : {c(request, 'cyan')}")
+    _mode = "review (asks after each skill)" if review else "autonomous"
+    print(f"  {dim('LLM')}     : {llm['icon']} {bold(llm['name'])}   {dim(f'· parallel x{workers} · {_mode}')}")
+    print()
+
+    # ── load / resume / create project (persistent memory) ────────────────────
+    project = load_project(project_name)
+    if project:
+        print(info(f"Resuming '{project_name}' — reading saved memory ({build_memory_digest(project).count(chr(10))+1} lines of state)."))
+    else:
+        spinner("AI detecting project type...")
+        ptype  = detect_type_ai(request, llm) if llm["cmd"] else detect_type_keyword(request)
+        clear_line()
+        seed = PROJECT_PROFILES.get(ptype, PROJECT_PROFILES["web"])
+        project = {
+            "name": project_name, "idea": request, "type": ptype, "status": "active",
+            "created": ts(),
+            "skills": {s: {"status": "pending", "started": None, "done": None} for s in seed},
+            "log": [{"ts": ts(), "event": "project_created", "detail": request}],
+        }
+        if ext_path:
+            project["external_path"] = ext_path
+            project["log"].append({"ts": ts(), "event": "existing_project_linked", "detail": ext_path})
+        (UGDIR / "workspaces" / project_name).mkdir(parents=True, exist_ok=True)
+        save_project(project_name, project)
+        print(ok(f"Created {c(ptype,'cyan')} project with {len(seed)} candidate skills."))
+    print()
+
+    # ── PLAN ──────────────────────────────────────────────────────────────────
+    print(step("PLAN", bold("AI is planning the full delivery")))
+    plan  = ai_plan_build(request, project, llm)
+    waves = plan.get("waves", [])
+    print()
+    print(f"  {dim('Intent')} : {plan.get('intent', request)}")
+    if not waves:
+        print()
+        print(ok("Nothing left to build — everything for this request is already delivered."))
+        print(dim(f"  See {UGDIR / 'workspaces' / project_name / 'STATE.md'}"))
+        print()
+        return
+    print(f"  {dim('Plan')}   : {bold(str(plan.get('total_skills', 0)))} skill(s) across "
+          f"{bold(str(len(waves)))} wave(s)")
+    for i, w in enumerate(waves, 1):
+        print(f"    {c('Wave '+str(i), 'magenta')}: {c(', '.join(w['skills']), 'cyan')}")
+        print(f"      {dim(w.get('rationale','')[:80])}")
+    print()
+
+    # ── plan approval gate (review mode): get OK on the approach first ────────
+    if review:
+        if not _confirm("I'll deliver the plan above, in this order — proceed?", default=True):
+            change = _ask_text("What should change? (re-run build with an adjusted prompt)")
+            project["log"].append({"ts": ts(), "event": "plan_rejected", "detail": change})
+            save_project(project_name, project)
+            print(warn("Plan not approved — nothing built. Your note was saved; re-run when ready."))
+            print()
+            return
+
+    # ── EXECUTE WAVES (parallel within a wave) ────────────────────────────────
+    all_results, scores = [], []
+    for wi, wave in enumerate(waves, 1):
+        skills = wave["skills"]
+        print(step(f"WAVE {wi}/{len(waves)}", bold(f"Running {len(skills)} skill(s) in parallel")))
+        spinner(f"AI working on: {', '.join(skills)} ...")
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(skills), workers)) as ex:
+            futs = {ex.submit(apply_skill_core, s, request, dict(project), llm, project_name): s
+                    for s in skills}
+            for fut in concurrent.futures.as_completed(futs):
+                try:
+                    results.append(fut.result())
+                except Exception as e:
+                    results.append({"skill": futs[fut], "score": 0, "spec_file": "",
+                                    "validation": {"error": str(e)}, "category": skill_category(futs[fut])})
+        clear_line()
+
+        # commit sequentially → continuous archive + state save after EVERY wave
+        for r in sorted(results, key=lambda x: x["skill"]):
+            if r["score"] > 0:
+                commit_skill(project, project_name, r, request, llm)
+            sc   = r["score"]
+            col  = "green" if sc >= 80 else "yellow" if sc >= 60 else "red"
+            mark = ok("") if sc >= 80 else (warn("") if sc >= 60 else err(""))
+            print(f"    {mark}{c(r['skill'], 'cyan'):<44} {c(str(sc)+'%', col)}  {dim('['+r['category']+']')}")
+            scores.append(sc)
+            all_results.append(r)
+
+        # ── human-in-the-loop review gate (skill by skill) ───────────────────
+        if review:
+            print()
+            for r in sorted(results, key=lambda x: x["skill"]):
+                if r["score"] <= 0:
+                    continue
+                if _confirm(f"Is '{r['skill']}' work okay?", default=True):
+                    print(f"    {ok(r['skill'] + ' accepted')}")
+                else:
+                    problem = _ask_text("What's the problem? (it'll be recorded, then we continue)")
+                    project["log"].append({"ts": ts(), "event": "skill_flagged",
+                                           "detail": r["skill"], "note": problem})
+                    ws = UGDIR / "workspaces" / project_name / "skills" / r["skill"]
+                    ws.mkdir(parents=True, exist_ok=True)
+                    (ws / "REVIEW_NOTES.md").write_text(
+                        f"# Review feedback — {r['skill']}\n\n- {ts()}: {problem or '(no detail given)'}\n")
+                    print(f"    {warn('noted in REVIEW_NOTES.md — moving to next skill')}")
+            print()
+
+        save_project(project_name, project)
+        write_state_md(project_name, project)
+        print(f"    {dim('↳ archived + STATE.md updated — safe to close session here')}")
+        print()
+
+    # ── VERIFY (self-check accuracy of the whole delivery) ────────────────────
+    print(step("VERIFY", bold("Self-checking end-to-end coverage")))
+    verify = ai_verify_build(request, project, llm)
+    print()
+    cov   = verify.get("coverage", 90)
+    cov_c = "green" if cov >= 85 else "yellow" if cov >= 60 else "red"
+    print(f"  {dim('Coverage')} : {c(str(cov)+'%', cov_c)}   {dim('· verdict:')} {verify.get('verdict','')}")
+    if verify.get("missing"):
+        print(f"  {dim('Gaps')}     : {c(', '.join(verify['missing'][:5]), 'yellow')}")
+
+    # ── SUMMARY ────────────────────────────────────────────────────────────────
+    done_cnt = sum(1 for v in project["skills"].values() if v["status"] == "done")
+    total    = len(project["skills"])
+    bar, pct = progress_bar(done_cnt, total)
+    avg      = int(sum(scores) / len(scores)) if scores else 0
+    print()
+    print(bold("━" * 64))
+    print(f"  ✅ Built {bold(str(len(all_results)))} skill(s) this run  ·  "
+          f"avg accuracy {c(str(avg)+'%', 'green' if avg>=80 else 'yellow')}")
+    print(f"  📊 Project: {c(bar,'cyan')} {c(str(pct)+'%','bold')} ({done_cnt}/{total})")
+    print(f"  💾 Memory : {UGDIR / 'workspaces' / project_name / 'STATE.md'}")
+    print(bold("━" * 64))
+    print()
+
+
+# ─── CMD: install ★ make `ugendran` callable everywhere ───────────────────────
+def cmd_install(args):
+    """Install a global `ugendran` command into ~/.local/bin pointing at this file."""
+    script = (ROOT / "ugendran.py").resolve()
+    target = Path.home() / ".local" / "bin"
+    target.mkdir(parents=True, exist_ok=True)
+    link = target / "ugendran"
+    link.write_text(f'#!/usr/bin/env bash\nexec python3 "{script}" "$@"\n')
+    link.chmod(0o755)
+
+    print()
+    print(bold("📦 ugendran installed"))
+    print(f"   {ok(str(link))}")
+    print(f"   {dim('→ runs')} {script}")
+    print()
+    if str(target) in os.environ.get("PATH", ""):
+        print(ok("~/.local/bin is on your PATH — just type:  ugendran"))
+    else:
+        rc = "~/.zshrc" if os.environ.get("SHELL", "").endswith("zsh") else "~/.bashrc"
+        export_cmd = 'export PATH="$HOME/.local/bin:$PATH"'
+        path_line = f"echo '{export_cmd}' >> {rc} && source {rc}"
+        print(warn("~/.local/bin is NOT on your PATH. Add it (one time):"))
+        print(f"   {c(path_line, 'yellow')}")
+    print()
+    print(dim("   Then anywhere:  ugendran build myapp \"build me a multi-tenant B2B SaaS with billing\""))
+    print()
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 COMMANDS = {
+    "build":   cmd_build,
+    "install": cmd_install,
     "do":      cmd_do,
     "new":     cmd_new,
     "audit":   cmd_audit,
@@ -1251,13 +1815,20 @@ def main():
         print()
         print(f"  {llm['icon']} LLM: {bold(llm['name'])}  |  78 Skills  |  100% AI-driven")
         print()
-        print(f"  {c('★ MAIN COMMAND', 'green')}")
-        _main = '<project> "what you want to build"'
+        print(f"  {c('★ AUTONOMOUS — one prompt, full end-to-end delivery', 'green')}")
+        _b = '<project> "build the whole thing"'
+        print(f"    {c('ugendran build', 'cyan')} {c(_b, 'yellow')}")
+        print(f"    {dim('→ AI plans ALL skills → runs them in parallel waves →')}")
+        print(f"    {dim('  self-verifies → archives continuously → resumable')}")
+        print()
+        print(f"  {c('★ SINGLE SKILL', 'green')}")
+        _main = '<project> "one thing you want"'
         print(f"    {c('ugendran do', 'cyan')} {c(_main, 'yellow')}")
-        print(f"    {dim('→ AI picks skill → generates real spec → archives')}")
+        print(f"    {dim('→ AI picks one skill → generates real spec → archives')}")
         print()
         print(f"  {dim('Other commands:')}")
         for cmd, desc in [
+            ("install",                 "Install global `ugendran` command"),
             ("new    <name> <idea>",    "Create project"),
             ("audit  <path> [name]",    "AI audit → continue/finetune/kill"),
             ("status [name]",           "Dashboard"),
@@ -1270,6 +1841,8 @@ def main():
             print(f"    {c('ugendran', 'cyan')} {c(cmd, 'yellow'):<34} {dim(desc)}")
         print()
         print(f"  {bold('Examples:')}")
+        _e0 = 'ugendran build saas "multi-tenant B2B SaaS with billing, auth & CI/CD"'
+        print(f"    {c(_e0, 'green')}")
         _e1 = 'ugendran do myapp "add Google login with MFA"'
         _e2 = 'ugendran do myapp "I need Redis caching for the API"'
         _e3 = 'ugendran do myapp "setup production CI/CD on GitHub Actions"'

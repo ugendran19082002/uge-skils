@@ -21,7 +21,7 @@
 
 ## Design — domain coverage
 
-- [ ] Addressed: secret store selection (Vault, cloud KMS/SM)
+- [ ] Addressed: secret store selection (a dedicated secrets manager or cloud KMS)
 - [ ] Addressed: dynamic/short-lived secrets and rotation
 - [ ] Addressed: access control, scoping, and auditing
 - [ ] Addressed: injection into apps/CI without exposure

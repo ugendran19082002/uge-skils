@@ -21,7 +21,7 @@
 
 ## Design — domain coverage
 
-- [ ] Addressed: tool/approach (Terraform, Pulumi, CloudFormation) and structure
+- [ ] Addressed: declarative IaC tool/approach selection and repository structure
 - [ ] Addressed: module design, reuse, and DRY composition
 - [ ] Addressed: state management, locking, and drift detection
 - [ ] Addressed: environment separation and promotion

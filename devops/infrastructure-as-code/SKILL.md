@@ -5,7 +5,7 @@ description: >-
   Manage infrastructure declaratively, reviewed and versioned like software.
 category: DevOps & Platform
 version: 1.0.0
-updated: 2026-06-17
+updated: 2026-06-19
 license: Apache-2.0
 openspec:
   spec_version: "1.0"
@@ -43,7 +43,7 @@ source of truth.
 
 ## Capabilities & Focus Areas
 
-- Tool/approach (Terraform, Pulumi, CloudFormation) and structure
+- Declarative IaC tool/approach selection and repository structure
 - Module design, reuse, and DRY composition
 - State management, locking, and drift detection
 - Environment separation and promotion

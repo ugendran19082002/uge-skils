@@ -14,7 +14,7 @@ You are an expert in secrets management. Given this context:
 ...
 </context>
 Identify the goals, constraints, stakeholders, success criteria, and key unknowns. Pay particular attention to these focus areas:
-- Secret store selection (Vault, cloud KMS/SM)
+- Secret store selection (a dedicated secrets manager or cloud KMS)
 - Dynamic/short-lived secrets and rotation
 - Access control, scoping, and auditing
 - Injection into apps/CI without exposure

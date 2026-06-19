@@ -1,6 +1,6 @@
 # Enterprise OpenSpec Skill Catalog
 
-**78 production-ready, spec-driven skills** spanning the full software delivery lifecycle — from idea to maintenance. Each skill is an OpenSpec artifact: a reviewable, versioned, gated way of doing one thing well.
+**88 production-ready, spec-driven skills** spanning the full software delivery lifecycle — from idea to maintenance. Each skill is an OpenSpec artifact: a reviewable, versioned, gated way of doing one thing well.
 
 ## What is an OpenSpec skill?
 
@@ -35,7 +35,7 @@ Every skill folder contains:
 
 ## Catalog
 
-### Product (9)
+### Product (10)
 
 | Skill | What it does |
 |-------|--------------|
@@ -48,8 +48,9 @@ Every skill folder contains:
 | [`risk-analysis`](product/risk-analysis/SKILL.md) | Identify, assess, and plan responses to risks before they become incidents. |
 | [`cost-estimation`](product/cost-estimation/SKILL.md) | Produce defensible effort and cost estimates with explicit ranges and assumptions. |
 | [`roadmap-planning`](product/roadmap-planning/SKILL.md) | Sequence outcomes over time, balancing value, dependencies, and capacity. |
+| [`product-analytics`](product/product-analytics/SKILL.md) | Instrument product analytics and event tracking so decisions are evidence-based. |
 
-### Architecture (12)
+### Architecture (13)
 
 | Skill | What it does |
 |-------|--------------|
@@ -65,8 +66,9 @@ Every skill folder contains:
 | [`multi-tenant-architecture`](architecture/multi-tenant-architecture/SKILL.md) | Isolate, scale, and operate many tenants safely on shared infrastructure. |
 | [`domain-driven-design`](architecture/domain-driven-design/SKILL.md) | Model complex domains with bounded contexts and a shared ubiquitous language. |
 | [`microservices-governance`](architecture/microservices-governance/SKILL.md) | Set the standards that keep many services consistent, observable, and safe. |
+| [`realtime-architecture`](architecture/realtime-architecture/SKILL.md) | Design realtime systems — websockets, SSE, pub/sub, and presence — that stay consistent under load. |
 
-### Frontend (7)
+### Frontend (8)
 
 | Skill | What it does |
 |-------|--------------|
@@ -77,8 +79,9 @@ Every skill folder contains:
 | [`frontend-optimization`](frontend/frontend-optimization/SKILL.md) | Improve load and runtime performance against measured budgets. |
 | [`accessibility-review`](frontend/accessibility-review/SKILL.md) | Audit and remediate against WCAG so the product works for everyone. |
 | [`design-system`](frontend/design-system/SKILL.md) | Build a shared system of tokens, components, and guidelines for consistency at scale. |
+| [`internationalization`](frontend/internationalization/SKILL.md) | Design i18n/l10n: locales, translations, formatting, and right-to-left from the start. |
 
-### Backend (8)
+### Backend (11)
 
 | Skill | What it does |
 |-------|--------------|
@@ -90,8 +93,11 @@ Every skill folder contains:
 | [`api-contract-design`](backend/api-contract-design/SKILL.md) | Define and govern machine-readable contracts as the source of truth. |
 | [`file-storage-design`](backend/file-storage-design/SKILL.md) | Design secure, scalable storage for files and media. |
 | [`search-architecture`](backend/search-architecture/SKILL.md) | Design relevant, fast, scalable search over your data. |
+| [`payments-billing`](backend/payments-billing/SKILL.md) | Design payments, subscriptions, invoicing, and billing that are correct, auditable, and PCI-aware. |
+| [`notification-system`](backend/notification-system/SKILL.md) | Design multi-channel notifications — email, push, SMS, in-app — that are reliable and not annoying. |
+| [`api-gateway-design`](backend/api-gateway-design/SKILL.md) | Design an API gateway: routing, auth, rate limiting, versioning, and observability at the edge. |
 
-### AI & Data (10)
+### AI & Data (11)
 
 | Skill | What it does |
 |-------|--------------|
@@ -104,9 +110,10 @@ Every skill folder contains:
 | [`vector-database-design`](ai/vector-database-design/SKILL.md) | Design vector storage and indexing for fast, accurate similarity search. |
 | [`ai-monitoring`](ai/ai-monitoring/SKILL.md) | Monitor AI systems for quality, drift, safety, and cost in production. |
 | [`model-finetuning`](ai/model-finetuning/SKILL.md) | Decide when and how to fine-tune, with data, method, and evaluation discipline. |
+| [`data-pipeline-design`](ai/data-pipeline-design/SKILL.md) | Design reliable ingestion and transformation pipelines that move data correctly and observably. |
 | [`guardrails-design`](ai/guardrails-design/SKILL.md) | Design input/output safety controls for AI systems. |
 
-### Testing & Quality (6)
+### Testing & Quality (7)
 
 | Skill | What it does |
 |-------|--------------|
@@ -115,6 +122,7 @@ Every skill folder contains:
 | [`integration-testing`](testing/integration-testing/SKILL.md) | Verify components work together across real boundaries. |
 | [`performance-testing`](testing/performance-testing/SKILL.md) | Validate the system meets performance and scalability targets under load. |
 | [`e2e-testing`](testing/e2e-testing/SKILL.md) | Validate complete user journeys through the real system. |
+| [`contract-testing`](testing/contract-testing/SKILL.md) | Verify services honor their API/event contracts so independent deploys don't break consumers. |
 | [`security-testing`](testing/security-testing/SKILL.md) | Find vulnerabilities through systematic, layered security testing. |
 
 ### DevOps & Platform (13)
@@ -144,7 +152,7 @@ Every skill folder contains:
 | [`vulnerability-management`](security/vulnerability-management/SKILL.md) | Continuously find, prioritize, and remediate vulnerabilities. |
 | [`access-control-design`](security/access-control-design/SKILL.md) | Design authorization models that enforce least privilege. |
 
-### Maintenance & Operations (9)
+### Maintenance & Operations (11)
 
 | Skill | What it does |
 |-------|--------------|
@@ -157,6 +165,8 @@ Every skill folder contains:
 | [`incident-response`](maintenance/incident-response/SKILL.md) | Respond to production incidents with structure, then learn from them. |
 | [`monitoring-alerting`](maintenance/monitoring-alerting/SKILL.md) | Design alerts that fire on real, actionable problems — and nothing else. |
 | [`technical-debt-management`](maintenance/technical-debt-management/SKILL.md) | Make technical debt visible, prioritized, and paid down deliberately. |
+| [`code-simplicity-and-reuse`](maintenance/code-simplicity-and-reuse/SKILL.md) | Choose the simplest solution and reuse before writing new code (KISS, DRY, YAGNI). |
+| [`feature-flag-management`](maintenance/feature-flag-management/SKILL.md) | Manage feature flags, gradual rollout, and experimentation without flag debt or surprises. |
 
 ## Lifecycle map
 
@@ -182,4 +192,4 @@ python3 _generator/generate.py
 ```
 
 ---
-*78 skills · OpenSpec spec v1.0 · Apache-2.0*
+*88 skills · OpenSpec spec v1.0 · Apache-2.0*

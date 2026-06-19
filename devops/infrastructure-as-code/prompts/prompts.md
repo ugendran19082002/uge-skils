@@ -14,7 +14,7 @@ You are an expert in infrastructure as code. Given this context:
 ...
 </context>
 Identify the goals, constraints, stakeholders, success criteria, and key unknowns. Pay particular attention to these focus areas:
-- Tool/approach (Terraform, Pulumi, CloudFormation) and structure
+- Declarative IaC tool/approach selection and repository structure
 - Module design, reuse, and DRY composition
 - State management, locking, and drift detection
 - Environment separation and promotion
