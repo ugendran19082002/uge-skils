@@ -1,9 +1,0 @@
-{
-  "project": "hybridtest",
-  "skill": "market-research",
-  "request": "SaaS with login, payments and search",
-  "llm": "Keyword-Fallback",
-  "validation_score": 85,
-  "spec_file": "/home/agent/openspec-skills/.ugendran/workspaces/hybridtest/skills/market-research/SPEC.md",
-  "applied_at": "2026-06-19 11:48:05"
-}

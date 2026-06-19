@@ -253,6 +253,42 @@ class TestDiscontinue(Base):
         self.assertIn("Decommission", runbooks[0].read_text())
 
 
+class TestHybridOpenSpec(Base):
+    def test_normalize_guarantees_structure(self):
+        # Empty input must still yield a fully-formed, renderable change.
+        data = u.normalize_change_data({}, "payments-billing", "add billing")
+        self.assertTrue(data["capability"])
+        self.assertTrue(data["requirements"])
+        for r in data["requirements"]:
+            self.assertIn("SHALL", r["shall"])
+            self.assertGreaterEqual(len(r["scenarios"]), 1)
+            for s in r["scenarios"]:
+                self.assertTrue(s["when"] and s["then"])
+        self.assertTrue(data["tasks"] and data["tasks"][0]["items"])
+
+    def test_render_writes_openspec_files(self):
+        ws = u.UGDIR / "workspaces" / "p"
+        data = u.normalize_change_data({}, "api-design", "design api")
+        cdir = u.render_openspec_change(ws, "api-design-x", data)
+        self.assertTrue((cdir / "proposal.md").exists())
+        self.assertTrue((cdir / "tasks.md").exists())
+        spec = (cdir / "specs" / data["capability"] / "spec.md").read_text()
+        self.assertIn("## ADDED Requirements", spec)
+        self.assertIn("### Requirement:", spec)
+        self.assertIn("- **WHEN**", spec)
+        self.assertIn("- **THEN**", spec)
+        self.assertTrue((u.UGDIR / "workspaces" / "p" / "openspec" / "config.yaml").exists())
+
+    @unittest.skipUnless(u.openspec_available(), "openspec CLI not installed")
+    def test_emitted_change_passes_real_validate(self):
+        self.make_project("p")
+        r = u.emit_and_validate_openspec("authentication-design", "secure login",
+                                         u.load_project("p"), OFFLINE_LLM, "p")
+        self.assertTrue(r["valid"], r["issues"])
+        self.assertGreaterEqual(r["requirements"], 1)
+        self.assertGreaterEqual(r["scenarios"], 1)
+
+
 class TestInstall(Base):
     def test_install_creates_executable_wrapper(self):
         home = tempfile.TemporaryDirectory()
