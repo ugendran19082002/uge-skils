@@ -2037,9 +2037,277 @@ def cmd_install(args):
     print()
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  APPLY LAYER — implement a validated OpenSpec change as real code, then verify.
+#  Closes the loop: plan → spec → validate → IMPLEMENT → test (measurable pass).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+FILE_RE = re.compile(r"<<<FILE:\s*(.+?)\s*>>>\n(.*?)\n<<<END>>>", re.S)
+TEST_RE = re.compile(r"<<<TEST:\s*(.+?)\s*>>>")
+
+
+def list_changes(ws: Path) -> list:
+    cdir = ws / "openspec" / "changes"
+    if not cdir.exists():
+        return []
+    return sorted(d.name for d in cdir.iterdir() if d.is_dir())
+
+
+def read_change(ws: Path, change: str) -> dict:
+    cdir = ws / "openspec" / "changes" / change
+    if not cdir.exists():
+        return {}
+    specs = "\n\n".join(p.read_text() for p in sorted(cdir.glob("specs/*/spec.md")))
+    return {
+        "proposal": (cdir / "proposal.md").read_text() if (cdir / "proposal.md").exists() else "",
+        "specs": specs,
+        "tasks": (cdir / "tasks.md").read_text() if (cdir / "tasks.md").exists() else "",
+        "dir": cdir,
+    }
+
+
+def parse_emitted_files(text: str) -> tuple:
+    """Parse <<<FILE: path>>> ... <<<END>>> blocks and an optional <<<TEST: cmd>>>."""
+    files = [(p.strip(), c) for p, c in FILE_RE.findall(text)]
+    tm = TEST_RE.search(text)
+    test_cmd = tm.group(1).strip() if tm else ""
+    if test_cmd.upper() == "NONE":
+        test_cmd = ""
+    return files, test_cmd
+
+
+def safe_write_files(target: Path, files: list) -> tuple:
+    """Write files under target only. Reject absolute paths and traversal."""
+    written, rejected = [], []
+    target = target.resolve()
+    for rel, content in files:
+        rel = rel.lstrip("/")
+        dest = (target / rel).resolve()
+        if target != dest and target not in dest.parents:
+            rejected.append(rel)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content)
+        written.append(rel)
+    return written, rejected
+
+
+def detect_verify_cmd(target: Path) -> str:
+    """Fallback build/test command when the LLM didn't supply one."""
+    if (target / "package.json").exists():
+        try:
+            pj = json.loads((target / "package.json").read_text())
+            if "test" in pj.get("scripts", {}):
+                return "npm test --silent"
+            if "build" in pj.get("scripts", {}):
+                return "npm run build"
+        except Exception:
+            pass
+    if list(target.glob("**/test_*.py")) or list(target.glob("**/*_test.py")) or (target / "pytest.ini").exists():
+        return "python3 -m pytest -q"
+    if list(target.glob("**/*.py")):
+        return "python3 -m compileall -q ."
+    if (target / "go.mod").exists():
+        return "go test ./..."
+    if (target / "Cargo.toml").exists():
+        return "cargo test"
+    return ""
+
+
+def run_verify(target: Path, cmd: str, timeout: int = 180) -> dict:
+    """Run the verify command in the target dir. Returns pass/fail + tail of output."""
+    if not cmd:
+        return {"ran": False, "passed": None, "cmd": "", "output": "no test/build command"}
+    try:
+        r = subprocess.run(cmd, shell=True, cwd=str(target), capture_output=True,
+                           text=True, timeout=timeout)
+        tail = (r.stdout + r.stderr)[-1500:]
+        return {"ran": True, "passed": r.returncode == 0, "cmd": cmd, "output": tail}
+    except subprocess.TimeoutExpired:
+        return {"ran": True, "passed": False, "cmd": cmd, "output": f"timed out after {timeout}s"}
+    except Exception as e:
+        return {"ran": True, "passed": False, "cmd": cmd, "output": str(e)}
+
+
+def check_off_tasks(ws: Path, change: str):
+    """Mark all tasks done in tasks.md after a successful apply."""
+    tf = ws / "openspec" / "changes" / change / "tasks.md"
+    if tf.exists():
+        tf.write_text(tf.read_text().replace("- [ ]", "- [x]"))
+
+
+def ai_implement_change(change_data: dict, target: Path, project: dict, llm: dict) -> str:
+    """Ask the LLM to implement the change as real files in the emitted format."""
+    existing = [str(p.relative_to(target)) for p in target.rglob("*")
+                if p.is_file() and ".git" not in p.parts][:40]
+    prompt = f"""You are a senior engineer implementing an OpenSpec change as REAL, working code.
+
+PROJECT: {project.get('name')} ({project.get('type','web')}) — {project.get('idea','')}
+
+PROPOSAL:
+{change_data['proposal'][:1500]}
+
+REQUIREMENTS & SCENARIOS (implement to satisfy these):
+{change_data['specs'][:2500]}
+
+TASKS (implement each):
+{change_data['tasks'][:1500]}
+
+Existing files in target dir: {', '.join(existing) if existing else '(empty project)'}
+
+Output EVERY file you create or modify in EXACTLY this format and nothing else outside the blocks:
+
+<<<FILE: relative/path/to/file.ext>>>
+<full file content>
+<<<END>>>
+
+Use relative paths only (never absolute, never ..). Write complete, runnable code with imports.
+Include or update tests so the change is verifiable. After all files, output one line:
+<<<TEST: the single shell command to build or run the tests, or NONE>>>"""
+    spinner("AI implementing the change as code...")
+    out = call_llm(prompt, llm, max_tokens=4000)
+    clear_line()
+    return out or ""
+
+
+# ─── CMD: apply ★ implement a validated change + verify ───────────────────────
+def cmd_apply(args):
+    """
+    ugendran apply <project> [change] [--path DIR] [--no-verify]
+
+    Implement ONE validated OpenSpec change's tasks as real code into a target
+    repo, then run its build/test to VERIFY (measurable pass/fail). Serialized
+    and path-safe. Review the diff afterwards.
+    """
+    target_dir, no_verify, positional = None, False, []
+    it = iter(args)
+    for a in it:
+        if a == "--path":
+            target_dir = next(it, None)
+        elif a == "--no-verify":
+            no_verify = True
+        else:
+            positional.append(a)
+    if not positional:
+        print(err('Usage: ugendran apply <project> [change] [--path DIR] [--no-verify]'))
+        return
+
+    project_name = positional[0]
+    project = load_project(project_name)
+    if not project:
+        print(err(f"Project '{project_name}' not found."))
+        return
+    llm = detect_llm()
+    if not llm["cmd"]:
+        print(err("apply needs an LLM CLI (claude/gemini) to write code. None detected."))
+        return
+
+    ws = UGDIR / "workspaces" / project_name
+    changes = list_changes(ws)
+    if not changes:
+        print(err(f"No OpenSpec changes for '{project_name}'. Run: ugendran build {project_name} \"...\" --openspec"))
+        return
+
+    change = positional[1] if len(positional) > 1 else None
+    if not change:
+        if len(changes) == 1:
+            change = changes[0]
+        else:
+            print(warn("Specify which change to apply:"))
+            for cmt in changes:
+                print(f"   {c('›','cyan')} {cmt}")
+            return
+    if change not in changes:
+        print(err(f"Change '{change}' not found. Available: {', '.join(changes)}"))
+        return
+
+    target = Path(target_dir).resolve() if target_dir else (ws / "code").resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    print()
+    print(bold("━" * 60))
+    print(bold(f"  🔨 ugendran apply — implement + verify"))
+    print(bold("━" * 60))
+    print(f"  {dim('Project')} : {project_name}")
+    print(f"  {dim('Change')}  : {c(change, 'cyan')}")
+    print(f"  {dim('Target')}  : {target}")
+    print(f"  {dim('LLM')}     : {llm['icon']} {llm['name']}")
+    print()
+
+    cd = read_change(ws, change)
+    if not cd:
+        print(err("Could not read change artifacts."))
+        return
+
+    # validate the change first — only implement validated specs
+    if openspec_available():
+        valid, issues = openspec_validate_change(ws, change)
+        if valid is False:
+            print(warn(f"Change is not validate-clean ({issues[:1]}). Implementing anyway, but fix the spec."))
+        elif valid:
+            print(ok("Spec passes `openspec validate --strict` — implementing."))
+        print()
+
+    out = ai_implement_change(cd, target, project, llm)
+    files, test_cmd = parse_emitted_files(out)
+    if not files:
+        print(err("LLM returned no parseable files. Nothing written."))
+        return
+
+    written, rejected = safe_write_files(target, files)
+    print(step(1, bold(f"Wrote {len(written)} file(s)")))
+    for w in written[:20]:
+        print(f"    {ok('')}{c(w, 'cyan')}")
+    if rejected:
+        print(f"    {warn('rejected unsafe paths: ' + ', '.join(rejected))}")
+    print()
+
+    # verify
+    verify = {"ran": False, "passed": None, "cmd": "", "output": "skipped"}
+    if not no_verify:
+        cmd = test_cmd or detect_verify_cmd(target)
+        print(step(2, bold("Verifying")))
+        if cmd:
+            print(f"    {dim('$')} {c(cmd, 'yellow')}")
+            verify = run_verify(target, cmd)
+            if verify["passed"]:
+                print(f"    {ok('tests/build PASSED')}")
+                check_off_tasks(ws, change)
+            elif verify["passed"] is False:
+                print(f"    {err('tests/build FAILED')}")
+                print(dim("    " + verify["output"][-400:].replace("\n", "\n    ")))
+            else:
+                print(f"    {dim('no verify command available')}")
+        else:
+            print(f"    {dim('no test/build command detected — skipping (use the spec to add one)')}")
+        print()
+
+    # archive + log
+    rec = {"project": project_name, "change": change, "target": str(target),
+           "files_written": written, "rejected": rejected,
+           "verify": verify, "applied_at": ts(), "llm": llm["name"]}
+    af = ARCHIVE_DIR / f"{project_name}_apply_{change}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    af.write_text(json.dumps(rec, indent=2))
+    project.setdefault("log", []).append({
+        "ts": ts(), "event": "change_applied", "detail": change,
+        "verify": verify["passed"], "files": len(written)})
+    save_project(project_name, project)
+
+    print(bold("━" * 60))
+    vp = verify["passed"]
+    verdict = (c("VERIFIED ✓", "green") if vp else
+               c("UNVERIFIED ✗", "red") if vp is False else dim("not verified"))
+    print(f"  {len(written)} files · {verdict}")
+    print(f"  {dim('Review the diff in:')} {target}")
+    print(f"  {dim('Archive:')} {af.name}")
+    print(bold("━" * 60))
+    print()
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 COMMANDS = {
     "build":   cmd_build,
+    "apply":   cmd_apply,
     "install": cmd_install,
     "do":      cmd_do,
     "new":     cmd_new,
@@ -2076,6 +2344,7 @@ def main():
         print()
         print(f"  {dim('Other commands:')}")
         for cmd, desc in [
+            ("apply  <name> [change]",  "Implement a validated change as code + verify"),
             ("install",                 "Install global `ugendran` command"),
             ("new    <name> <idea>",    "Create project"),
             ("audit  <path> [name]",    "AI audit → continue/finetune/kill"),

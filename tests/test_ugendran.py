@@ -39,6 +39,7 @@ class Base(unittest.TestCase):
     def setUp(self):
         # Force offline so no real LLM call happens.
         self._orig_detect = u.detect_llm
+        self._orig_call = u.call_llm
         u.detect_llm = lambda: OFFLINE_LLM
 
         # Redirect all writable state into a temp dir; ROOT stays real so the
@@ -54,6 +55,7 @@ class Base(unittest.TestCase):
 
     def tearDown(self):
         u.detect_llm = self._orig_detect
+        u.call_llm = self._orig_call
         u.UGDIR, u.ARCHIVE_DIR, u.PROJECTS = self._orig
         self.tmp.cleanup()
 
@@ -287,6 +289,50 @@ class TestHybridOpenSpec(Base):
         self.assertTrue(r["valid"], r["issues"])
         self.assertGreaterEqual(r["requirements"], 1)
         self.assertGreaterEqual(r["scenarios"], 1)
+
+
+class TestApply(Base):
+    def test_parse_emitted_files(self):
+        text = ("<<<FILE: a/b.py>>>\nprint(1)\n<<<END>>>\n"
+                "<<<FILE: c.txt>>>\nhi\n<<<END>>>\n<<<TEST: pytest -q>>>")
+        files, cmd = u.parse_emitted_files(text)
+        self.assertEqual([f[0] for f in files], ["a/b.py", "c.txt"])
+        self.assertEqual(cmd, "pytest -q")
+
+    def test_parse_test_none(self):
+        _, cmd = u.parse_emitted_files("<<<FILE: x>>>\ny\n<<<END>>>\n<<<TEST: NONE>>>")
+        self.assertEqual(cmd, "")
+
+    def test_safe_write_rejects_traversal(self):
+        tgt = u.UGDIR / "t"
+        tgt.mkdir(parents=True, exist_ok=True)
+        written, rejected = u.safe_write_files(
+            tgt, [("ok.py", "1"), ("../escape.py", "2"), ("/abs.py", "3")])
+        self.assertIn("ok.py", written)
+        self.assertIn("../escape.py", rejected)
+        self.assertFalse((tgt.parent / "escape.py").exists())
+
+    def test_apply_implements_and_verifies(self):
+        proj = self.make_project("ap", skills=["api-design"])
+        proj["skills"]["api-design"]["status"] = "done"
+        u.save_project("ap", proj)
+        (u.UGDIR / "workspaces" / "ap").mkdir(parents=True, exist_ok=True)
+        osr = u.emit_and_validate_openspec("api-design", "add add(a,b)", proj, OFFLINE_LLM, "ap")
+        target = u.UGDIR / "workspaces" / "ap" / "code"
+
+        u.detect_llm = lambda: {"name": "Mock", "cmd": "mock", "icon": "🧪"}
+        u.call_llm = lambda *a, **k: (
+            "<<<FILE: m.py>>>\ndef add(a,b):\n    return a+b\n<<<END>>>\n"
+            '<<<TEST: python3 -c "import m; assert m.add(2,3)==5">>>')
+        try:
+            quiet(u.cmd_apply, ["ap", osr["change"], "--path", str(target)])
+        finally:
+            u.detect_llm = lambda: OFFLINE_LLM
+        self.assertTrue((target / "m.py").exists())
+        # tasks checked off only happens on pass
+        tasks = (u.UGDIR / "workspaces" / "ap" / "openspec" / "changes" / osr["change"] / "tasks.md").read_text()
+        self.assertIn("- [x]", tasks)
+        self.assertTrue(list(u.ARCHIVE_DIR.glob("ap_apply_*.json")))
 
 
 class TestInstall(Base):
