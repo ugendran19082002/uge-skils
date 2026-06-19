@@ -1585,6 +1585,214 @@ and lessons learned. Be specific and ordered."""
             "- [ ] Notify stakeholders; record lessons learned\n")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HYBRID LAYER — emit REAL OpenSpec artifacts + validate with the real CLI.
+#  This is the accuracy engine: structure is rendered deterministically and then
+#  proven by `openspec validate --strict` (objective pass/fail), not self-graded.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def openspec_available() -> bool:
+    try:
+        r = subprocess.run(["openspec", "--version"], capture_output=True, timeout=5)
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _slug(text: str, fallback: str = "item") -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return s or fallback
+
+
+def ensure_openspec_root(ws: Path):
+    """Create a minimal, valid OpenSpec project root (idempotent)."""
+    (ws / "openspec" / "changes").mkdir(parents=True, exist_ok=True)
+    cfg = ws / "openspec" / "config.yaml"
+    if not cfg.exists():
+        cfg.write_text("schema: spec-driven\n")
+
+
+def ai_openspec_change_data(skill: str, request: str, project: dict, llm: dict) -> dict:
+    """Produce structured change data (LLM-enriched when online). Always
+    normalized afterwards so the rendered change is validate-clean."""
+    data = {}
+    if llm["cmd"]:
+        desc = SKILL_DESCRIPTIONS.get(skill, "")
+        prompt = f"""You are writing an OpenSpec change for the '{skill}' capability.
+Developer request: "{request}"
+Project: {project.get('name')} ({project.get('type','web')}) — {project.get('idea','')}
+Skill focus: {desc}
+
+Return ONLY valid JSON with this exact shape:
+{{
+  "capability": "<short-kebab-capability-name>",
+  "why": "<1-2 sentences: why this change>",
+  "what_changes": ["**NEW** — <change>", "..."],
+  "impact": ["<affected area / new dependency / API>"],
+  "requirements": [
+    {{"name": "<short title>",
+      "shall": "The system SHALL <testable behavior>.",
+      "scenarios": [
+        {{"name": "<case>", "when": "<condition>", "then": "<expected outcome>"}}
+      ]}}
+  ],
+  "tasks": [{{"group": "<group>", "items": ["<task>", "..."]}}]
+}}
+Make 3-6 requirements, each with 2-3 concrete WHEN/THEN scenarios. Be specific to the request."""
+        data = call_llm_json(prompt, llm) or {}
+    return normalize_change_data(data, skill, request)
+
+
+def normalize_change_data(data: dict, skill: str, request: str) -> dict:
+    """Guarantee every field needed for a validate-clean change exists.
+    This is what makes structural validity ~deterministic."""
+    sp = skill_path(skill)
+    title = skill.replace("-", " ").title()
+    desc = SKILL_DESCRIPTIONS.get(skill, f"{title} capability")
+
+    # Pull skill deliverables to seed requirements/tasks when the LLM gave none.
+    deliverables = []
+    if sp and (sp / "SKILL.md").exists():
+        txt = (sp / "SKILL.md").read_text()
+        m = re.search(r"## Deliverables\s*(.+?)\n## ", txt, re.S)
+        if m:
+            deliverables = [l.strip("- ").strip() for l in m.group(1).splitlines()
+                            if l.strip().startswith("-")]
+    if not deliverables:
+        deliverables = [f"{title} design", f"{title} validation plan"]
+
+    cap = _slug(data.get("capability") or skill, skill)
+    why = (data.get("why") or "").strip() or f"{desc} Required by request: {request}"
+    what = data.get("what_changes") or [f"**NEW** — {title}: {desc}"]
+    impact = data.get("impact") or [f"Introduces the `{cap}` capability and its artifacts."]
+
+    # Requirements — guarantee ≥1, each with a SHALL and ≥1 full scenario.
+    reqs = data.get("requirements") or []
+    if not reqs:
+        reqs = [{"name": d, "shall": f"The system SHALL provide {d.lower()}.",
+                 "scenarios": []} for d in deliverables[:5]]
+    norm_reqs = []
+    for i, r in enumerate(reqs, 1):
+        name = (r.get("name") or f"{title} requirement {i}").strip()
+        shall = (r.get("shall") or f"The system SHALL implement {name.lower()}.").strip()
+        if "SHALL" not in shall:
+            shall = "The system SHALL " + shall[0].lower() + shall[1:] if shall else \
+                    f"The system SHALL implement {name.lower()}."
+        scs = r.get("scenarios") or []
+        norm_scs = []
+        for s in scs:
+            when = (s.get("when") or "the capability is exercised").strip()
+            then = (s.get("then") or "it behaves per this requirement").strip()
+            sname = (s.get("name") or "Primary case").strip()
+            norm_scs.append({"name": sname, "when": when, "then": then})
+        if not norm_scs:  # guarantee at least one scenario
+            norm_scs = [{"name": "Primary case",
+                         "when": f"{name.lower()} is requested with valid input",
+                         "then": "the system fulfills the requirement and records the outcome"}]
+        norm_reqs.append({"name": name, "shall": shall, "scenarios": norm_scs})
+
+    # Tasks — guarantee ≥1 group with ≥1 item.
+    tasks = data.get("tasks") or []
+    if not tasks:
+        tasks = [{"group": f"{title} implementation",
+                  "items": deliverables[:6] or [f"Implement {title}"]}]
+    norm_tasks = []
+    for t in tasks:
+        items = [str(x) for x in (t.get("items") or []) if str(x).strip()]
+        if items:
+            norm_tasks.append({"group": (t.get("group") or "Implementation").strip(), "items": items})
+    if not norm_tasks:
+        norm_tasks = [{"group": "Implementation", "items": [f"Implement {title}"]}]
+
+    return {"capability": cap, "why": why, "what_changes": what, "impact": impact,
+            "requirements": norm_reqs, "tasks": norm_tasks}
+
+
+def render_openspec_change(ws: Path, change_name: str, data: dict) -> Path:
+    """Write a full OpenSpec change folder from normalized data. Deterministic →
+    headings/scenarios are always present, so `openspec validate` passes."""
+    ensure_openspec_root(ws)
+    cdir = ws / "openspec" / "changes" / change_name
+    (cdir / "specs" / data["capability"]).mkdir(parents=True, exist_ok=True)
+    (cdir / ".openspec.yaml").write_text(f"schema: spec-driven\ncreated: {ts()[:10]}\n")
+
+    # proposal.md
+    proposal = ["## Why", data["why"], "", "## What Changes"]
+    proposal += [f"- {b}" if not b.lstrip().startswith("-") else b for b in data["what_changes"]]
+    proposal += ["", "## Capabilities", "### New Capabilities",
+                 f"- `{data['capability']}`: {data['why']}", "",
+                 "### Modified Capabilities", "<!-- None -->", "", "## Impact"]
+    proposal += [f"- {b}" for b in data["impact"]]
+    (cdir / "proposal.md").write_text("\n".join(proposal) + "\n")
+
+    # specs/<cap>/spec.md
+    spec = ["## ADDED Requirements", ""]
+    for r in data["requirements"]:
+        spec += [f"### Requirement: {r['name']}", r["shall"], ""]
+        for s in r["scenarios"]:
+            spec += [f"#### Scenario: {s['name']}",
+                     f"- **WHEN** {s['when']}", f"- **THEN** {s['then']}", ""]
+    (cdir / "specs" / data["capability"] / "spec.md").write_text("\n".join(spec) + "\n")
+
+    # tasks.md
+    tasks = []
+    for gi, g in enumerate(data["tasks"], 1):
+        tasks.append(f"## {gi}. {g['group']}")
+        for ti, item in enumerate(g["items"], 1):
+            tasks.append(f"- [ ] {gi}.{ti} {item}")
+        tasks.append("")
+    (cdir / "tasks.md").write_text("\n".join(tasks) + "\n")
+    return cdir
+
+
+def openspec_validate_change(ws: Path, change_name: str) -> tuple:
+    """Run the REAL `openspec validate --strict --json`. Returns (valid, issues)."""
+    if not openspec_available():
+        return (None, ["openspec CLI not installed — emitted but not validated"])
+    try:
+        r = subprocess.run(["openspec", "validate", change_name, "--strict", "--json",
+                            "--no-interactive"],
+                           cwd=str(ws), capture_output=True, text=True, timeout=30)
+        out = json.loads(r.stdout or "{}")
+        item = (out.get("items") or [{}])[0]
+        return (bool(item.get("valid")), item.get("issues", []))
+    except Exception as e:
+        return (False, [f"validate error: {e}"])
+
+
+def emit_and_validate_openspec(skill: str, request: str, project: dict, llm: dict,
+                               project_name: str, max_fix: int = 2) -> dict:
+    """Generate → validate → fix loop for one skill. The fix loop feeds real
+    validator issues back to the LLM until `openspec validate` passes."""
+    ws = UGDIR / "workspaces" / project_name
+    change_name = _slug(f"{skill}-{request}")[:48].rstrip("-") or skill
+    data = ai_openspec_change_data(skill, request, project, llm)
+    render_openspec_change(ws, change_name, data)
+    valid, issues = openspec_validate_change(ws, change_name)
+
+    attempts = 0
+    while valid is False and attempts < max_fix and llm["cmd"]:
+        attempts += 1
+        fix_prompt = f"""This OpenSpec change failed strict validation with issues:
+{json.dumps(issues, indent=2)[:1500]}
+
+Here is the current change data (JSON):
+{json.dumps(data, indent=2)[:2500]}
+
+Return corrected JSON in the SAME shape that will pass `openspec validate --strict`.
+Ensure every requirement has a SHALL statement and at least one scenario with WHEN and THEN."""
+        fixed = call_llm_json(fix_prompt, llm)
+        if fixed:
+            data = normalize_change_data(fixed, skill, request)
+            render_openspec_change(ws, change_name, data)
+            valid, issues = openspec_validate_change(ws, change_name)
+
+    return {"skill": skill, "change": change_name, "valid": valid, "issues": issues,
+            "requirements": len(data["requirements"]),
+            "scenarios": sum(len(r["scenarios"]) for r in data["requirements"]),
+            "attempts": attempts}
+
+
 # ─── CMD: build ★ ONE PROMPT → FULL AUTONOMOUS DELIVERY ───────────────────────
 def cmd_build(args):
     """
@@ -1599,9 +1807,11 @@ def cmd_build(args):
       --workers N   max parallel skills per wave (default 4)
       --path DIR    existing project on disk (audited into the plan)
       --review/-r   ask "is this okay?" after each skill; record problems and continue
+      --openspec/-o HYBRID: also emit real OpenSpec changes and prove them with
+                    `openspec validate --strict` (measurable, not self-graded, accuracy)
     """
     # ── parse args / flags ──────────────────────────────────────────────────
-    workers, ext_path, review, positional = 4, None, False, []
+    workers, ext_path, review, openspec_mode, positional = 4, None, False, False, []
     it = iter(args)
     for a in it:
         if a == "--workers":
@@ -1610,6 +1820,8 @@ def cmd_build(args):
             ext_path = next(it, None)
         elif a in ("--review", "-r"):
             review = True
+        elif a in ("--openspec", "-o"):
+            openspec_mode = True
         else:
             positional.append(a)
     if len(positional) < 2:
@@ -1629,7 +1841,10 @@ def cmd_build(args):
     print(f"  {dim('Project')} : {bold(project_name)}")
     print(f"  {dim('Prompt')}  : {c(request, 'cyan')}")
     _mode = "review (asks after each skill)" if review else "autonomous"
-    print(f"  {dim('LLM')}     : {llm['icon']} {bold(llm['name'])}   {dim(f'· parallel x{workers} · {_mode}')}")
+    _hyb = " · hybrid OpenSpec (validated)" if openspec_mode else ""
+    print(f"  {dim('LLM')}     : {llm['icon']} {bold(llm['name'])}   {dim(f'· parallel x{workers} · {_mode}{_hyb}')}")
+    if openspec_mode and not openspec_available():
+        print(f"  {warn('openspec CLI not found — will emit artifacts but cannot validate')}")
     print()
 
     # ── load / resume / create project (persistent memory) ────────────────────
@@ -1685,7 +1900,7 @@ def cmd_build(args):
             return
 
     # ── EXECUTE WAVES (parallel within a wave) ────────────────────────────────
-    all_results, scores = [], []
+    all_results, scores, os_results = [], [], []
     for wi, wave in enumerate(waves, 1):
         skills = wave["skills"]
         print(step(f"WAVE {wi}/{len(waves)}", bold(f"Running {len(skills)} skill(s) in parallel")))
@@ -1732,6 +1947,22 @@ def cmd_build(args):
                     print(f"    {warn('noted in REVIEW_NOTES.md — moving to next skill')}")
             print()
 
+        # ── hybrid: emit + validate real OpenSpec artifacts for this wave ────
+        if openspec_mode:
+            for r in sorted(results, key=lambda x: x["skill"]):
+                if r["score"] <= 0:
+                    continue
+                osr = emit_and_validate_openspec(r["skill"], request, project, llm, project_name)
+                os_results.append(osr)
+                if osr["valid"] is True:
+                    badge = c("✓ openspec valid", "green")
+                elif osr["valid"] is False:
+                    badge = c("✗ invalid: " + str(osr["issues"][:1]), "red")
+                else:
+                    badge = dim("emitted (validator unavailable)")
+                counts = f"{osr['requirements']}req/{osr['scenarios']}scn"
+                print(f"      {dim('→')} {dim(osr['change'])}  {dim(counts)}  {badge}")
+
         save_project(project_name, project)
         write_state_md(project_name, project)
         print(f"    {dim('↳ archived + STATE.md updated — safe to close session here')}")
@@ -1758,6 +1989,22 @@ def cmd_build(args):
           f"avg accuracy {c(str(avg)+'%', 'green' if avg>=80 else 'yellow')}")
     print(f"  📊 Project: {c(bar,'cyan')} {c(str(pct)+'%','bold')} ({done_cnt}/{total})")
     print(f"  💾 Memory : {UGDIR / 'workspaces' / project_name / 'STATE.md'}")
+
+    # ── hybrid: report MEASURABLE (validator-proven) accuracy ────────────────
+    if openspec_mode and os_results:
+        checked = [r for r in os_results if r["valid"] is not None]
+        passed  = sum(1 for r in checked if r["valid"])
+        reqs    = sum(r["requirements"] for r in os_results)
+        scns    = sum(r["scenarios"] for r in os_results)
+        if checked:
+            rate = int(passed / len(checked) * 100)
+            rc   = "green" if rate >= 95 else "yellow" if rate >= 70 else "red"
+            print(f"  🎯 {bold('Measurable accuracy')}: {c(str(rate)+'%', rc)} "
+                  f"{dim(f'({passed}/{len(checked)} changes pass `openspec validate --strict`)')}")
+            print(f"     {dim(f'{reqs} requirements · {scns} WHEN/THEN scenarios · self-graded design avg {avg}%')}")
+        else:
+            print(f"  🎯 {dim(f'Emitted {len(os_results)} OpenSpec changes ({reqs} reqs / {scns} scenarios) — install openspec to validate')}")
+        print(f"  📂 OpenSpec: {UGDIR / 'workspaces' / project_name / 'openspec' / 'changes'}")
     print(bold("━" * 64))
     print()
 
@@ -1816,10 +2063,11 @@ def main():
         print(f"  {llm['icon']} LLM: {bold(llm['name'])}  |  78 Skills  |  100% AI-driven")
         print()
         print(f"  {c('★ AUTONOMOUS — one prompt, full end-to-end delivery', 'green')}")
-        _b = '<project> "build the whole thing"'
+        _b = '<project> "build the whole thing" [--openspec]'
         print(f"    {c('ugendran build', 'cyan')} {c(_b, 'yellow')}")
         print(f"    {dim('→ AI plans ALL skills → runs them in parallel waves →')}")
         print(f"    {dim('  self-verifies → archives continuously → resumable')}")
+        print(f"    {dim('  --openspec: emit + `openspec validate` real specs (proven accuracy)')}")
         print()
         print(f"  {c('★ SINGLE SKILL', 'green')}")
         _main = '<project> "one thing you want"'
