@@ -1,0 +1,81 @@
+{
+  "name": "myapp",
+  "idea": "I need search functionality",
+  "type": "web",
+  "status": "active",
+  "created": "2026-06-19 11:08",
+  "skills": {
+    "prd-generation": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "api-design": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "backend-architecture": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "frontend-architecture": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "database-design": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "authentication-design": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "security-architecture": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "testing-strategy": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "ci-cd-pipeline": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "docker-architecture": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "observability-design": {
+      "status": "pending",
+      "started": null,
+      "done": null
+    },
+    "search-architecture": {
+      "status": "done",
+      "started": "2026-06-19 11:08",
+      "done": "2026-06-19 11:08"
+    }
+  },
+  "log": [
+    {
+      "ts": "2026-06-19 11:08",
+      "event": "project_created",
+      "detail": "I need search functionality"
+    },
+    {
+      "ts": "2026-06-19 11:08",
+      "event": "skill_auto_done",
+      "detail": "search-architecture"
+    }
+  ]
+}

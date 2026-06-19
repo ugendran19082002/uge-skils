@@ -1,0 +1,16 @@
+{
+  "project": "myapp",
+  "skill": "caching-strategy",
+  "request": "I need to cache my API responses with Redis",
+  "confidence": 0.57,
+  "applied": "2026-06-19 11:07",
+  "files": [
+    "CONTEXT.md",
+    "SKILL.md",
+    "checklist.md",
+    "examples.md",
+    "prompts/prompts.md",
+    "templates/caching-strategy.md",
+    "templates/invalidation-plan.md"
+  ]
+}

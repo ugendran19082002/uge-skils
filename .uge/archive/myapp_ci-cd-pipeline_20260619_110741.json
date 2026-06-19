@@ -1,0 +1,16 @@
+{
+  "project": "myapp",
+  "skill": "ci-cd-pipeline",
+  "request": "setup GitHub Actions CI/CD pipeline",
+  "confidence": 0.57,
+  "applied": "2026-06-19 11:07",
+  "files": [
+    "CONTEXT.md",
+    "SKILL.md",
+    "checklist.md",
+    "examples.md",
+    "prompts/prompts.md",
+    "templates/deploy-strategy.md",
+    "templates/pipeline-design.md"
+  ]
+}
