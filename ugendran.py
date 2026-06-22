@@ -27,8 +27,8 @@ Commands:
   llm                                    Show which LLM is active
 """
 
-import os, sys, json, re, shutil, subprocess, textwrap, time
-import concurrent.futures, threading
+import os, sys, json, re, shutil, subprocess, time
+import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 

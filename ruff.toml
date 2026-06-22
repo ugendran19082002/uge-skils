@@ -1,0 +1,7 @@
+# Focused lint config — catch real bugs, not style noise.
+# F = pyflakes (unused imports, undefined names, redefinitions)
+# E9 = syntax errors
+line-length = 120
+
+[lint]
+select = ["F", "E9"]
