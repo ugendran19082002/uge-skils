@@ -292,6 +292,24 @@ class TestHybridOpenSpec(Base):
     def test_playbook_context_missing_skill_is_safe(self):
         self.assertEqual(u.load_playbook_context("does-not-exist"), "")
 
+    def test_skill_version_reads_frontmatter(self):
+        self.assertRegex(u.skill_version("api-design"), r"^\d+\.\d+\.\d+$")
+        self.assertEqual(u.skill_version("does-not-exist"), "0.0.0")
+
+    def test_provenance_recorded_for_reproducibility(self):
+        self.make_project("p")
+        r = u.emit_and_validate_openspec("api-design", "add search endpoint",
+                                         u.load_project("p"), OFFLINE_LLM, "p")
+        prov = (u.UGDIR / "workspaces" / "p" / "openspec" / "changes"
+                / r["change"] / "provenance.json")
+        self.assertTrue(prov.exists())
+        data = json.loads(prov.read_text())
+        self.assertEqual(data["prompt"], "add search endpoint")
+        self.assertEqual(data["skill"], "api-design")
+        self.assertRegex(data["skill_version"], r"^\d+\.\d+\.\d+$")
+        self.assertIn("openspec_version", data)
+        self.assertIn("generated_at", data)
+
     @unittest.skipUnless(u.openspec_available(), "openspec CLI not installed")
     def test_emitted_change_passes_real_validate(self):
         self.make_project("p")
@@ -300,6 +318,21 @@ class TestHybridOpenSpec(Base):
         self.assertTrue(r["valid"], r["issues"])
         self.assertGreaterEqual(r["requirements"], 1)
         self.assertGreaterEqual(r["scenarios"], 1)
+
+    @unittest.skipUnless(u.openspec_available(), "openspec CLI not installed")
+    def test_verify_specs_passes_on_archived_specs(self):
+        # Render → archive into living specs → drift detector reports clean.
+        ws = u.UGDIR / "workspaces" / "vs"
+        data = u.normalize_change_data({}, "api-design", "design api")
+        u.render_openspec_change(ws, "api-design-x", data)
+        archived, _ = u.openspec_archive_change(ws, "api-design-x")
+        self.assertTrue(archived)
+        out = quiet(u.cmd_verify_specs, ["vs"])
+        self.assertIn("no drift", out)
+
+    def test_verify_specs_no_specs_is_safe(self):
+        out = quiet(u.cmd_verify_specs, ["nope"])
+        self.assertIn("No living specs", out)
 
 
 class TestApply(Base):

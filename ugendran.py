@@ -1599,6 +1599,42 @@ def openspec_available() -> bool:
         return False
 
 
+def openspec_version() -> str:
+    try:
+        r = subprocess.run(["openspec", "--version"], capture_output=True, text=True, timeout=5)
+        return (r.stdout or "").strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def skill_version(skill: str) -> str:
+    """Read `version:` from a skill's SKILL.md frontmatter (for provenance/pinning)."""
+    sp = skill_path(skill)
+    if sp and (sp / "SKILL.md").exists():
+        m = re.search(r"^version:\s*([0-9][\w.\-]*)", (sp / "SKILL.md").read_text(), re.M)
+        if m:
+            return m.group(1)
+    return "0.0.0"
+
+
+def write_provenance(ws: Path, change_name: str, skill: str, request: str, llm: dict) -> Path:
+    """Record exactly what produced a change so it is regenerable → real
+    reproducibility. Written into the change folder next to its artifacts."""
+    cdir = ws / "openspec" / "changes" / change_name
+    cdir.mkdir(parents=True, exist_ok=True)
+    prov = {
+        "prompt": request,
+        "skill": skill,
+        "skill_version": skill_version(skill),
+        "llm": llm.get("name", "unknown"),
+        "openspec_version": openspec_version(),
+        "generated_at": ts(),
+    }
+    pf = cdir / "provenance.json"
+    pf.write_text(json.dumps(prov, indent=2) + "\n")
+    return pf
+
+
 def _slug(text: str, fallback: str = "item") -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
     return s or fallback
@@ -1842,6 +1878,9 @@ Ensure every requirement has a SHALL statement and at least one scenario with WH
             data = normalize_change_data(fixed, skill, request)
             render_openspec_change(ws, change_name, data)
             valid, issues = openspec_validate_change(ws, change_name)
+
+    # provenance — record what produced this change so it is regenerable.
+    write_provenance(ws, change_name, skill, request, llm)
 
     return {"skill": skill, "change": change_name, "valid": valid, "issues": issues,
             "requirements": len(data["requirements"]),
@@ -2388,10 +2427,68 @@ def cmd_apply(args):
     print()
 
 
+def cmd_verify_specs(args):
+    """
+    ugendran verify-specs <project>
+
+    Drift detector: run the REAL `openspec validate --specs --strict` over the
+    project's living specs and report pass/fail per spec. Mechanical proof the
+    source of truth is internally consistent — wire it into CI to catch drift.
+    """
+    if not args:
+        print(err("Usage: ugendran verify-specs <project>"))
+        return
+    project_name = args[0]
+    ws = UGDIR / "workspaces" / project_name
+    specs_dir = ws / "openspec" / "specs"
+    if not specs_dir.exists() or not any(specs_dir.rglob("spec.md")):
+        print(warn(f"No living specs for '{project_name}' yet. Apply a change first (archive populates specs/)."))
+        return
+    if not openspec_available():
+        print(err("openspec CLI not installed — cannot verify specs."))
+        return
+
+    print()
+    print(bold("━" * 60))
+    print(bold("  🔎 ugendran verify-specs — drift detector"))
+    print(bold("━" * 60))
+    try:
+        r = subprocess.run(["openspec", "validate", "--specs", "--strict", "--json",
+                            "--no-interactive"],
+                           cwd=str(ws), capture_output=True, text=True, timeout=60)
+        out = json.loads(r.stdout or "{}")
+    except Exception as e:
+        print(err(f"validate error: {e}"))
+        return
+
+    items = out.get("items", [])
+    bad = 0
+    for it in items:
+        name = it.get("name") or it.get("id") or "spec"
+        if it.get("valid"):
+            print(f"  {ok('')}{c(name, 'cyan')}")
+        else:
+            bad += 1
+            print(f"  {err('✗ ' + name)}")
+            for iss in (it.get("issues") or [])[:3]:
+                print(f"      {dim('· ' + str(iss))}")
+    print(bold("━" * 60))
+    total = len(items)
+    if total == 0:
+        print(f"  {dim('no specs reported by openspec')}")
+    elif bad == 0:
+        print(f"  {c(f'{total}/{total} specs valid — no drift ✓', 'green')}")
+    else:
+        print(f"  {c(f'{total - bad}/{total} valid · {bad} drifting ✗', 'red')}")
+    print(bold("━" * 60))
+    print()
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 COMMANDS = {
     "build":   cmd_build,
     "apply":   cmd_apply,
+    "verify-specs": cmd_verify_specs,
     "install": cmd_install,
     "do":      cmd_do,
     "new":     cmd_new,
@@ -2429,6 +2526,7 @@ def main():
         print(f"  {dim('Other commands:')}")
         for cmd, desc in [
             ("apply  <name> [change]",  "Implement a change as code, verify + archive into specs"),
+            ("verify-specs <name>",     "Drift detector: validate living specs (--specs --strict)"),
             ("install",                 "Install global `ugendran` command"),
             ("new    <name> <idea>",    "Create project"),
             ("audit  <path> [name]",    "AI audit → continue/finetune/kill"),
