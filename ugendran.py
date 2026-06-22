@@ -525,6 +525,12 @@ SKILL DESCRIPTION: {SKILL_DESCRIPTIONS.get(skill, '')}
 SKILL DEFINITION (for reference):
 {skill_md[:2000]}
 
+QUALITY CHECKLIST (your spec must satisfy these gates):
+{checklist_content or '(none provided)'}
+
+TEMPLATES (match this structure where applicable):
+{templates_content or '(none provided)'}
+
 TASK: Generate a complete, professional spec document for the "{skill}" skill applied to this specific project.
 
 Requirements:
@@ -619,42 +625,84 @@ See `checklist.md` for the full list of anti-patterns specific to `{skill}`.
 """
 
 
-def ai_validate_checklist(skill: str, spec_content: str, llm: dict, quiet: bool = False) -> dict:
-    """Use AI to validate the generated spec against the skill checklist."""
+# Words that carry no signal when matching a checklist gate against a spec.
+_GATE_STOP = {
+    "the", "and", "are", "for", "with", "this", "that", "from", "into", "their",
+    "have", "has", "was", "were", "been", "being", "its", "via", "per", "out",
+    "addressed", "produced", "confirmed", "avoided", "reviewed", "final", "owner",
+    "assigned", "handoff", "done", "stored", "identified", "stated", "listed",
+    "captured", "explicit", "written", "down", "across", "straight", "wire",
+    "without", "policy", "registry", "cadence", "communication", "review",
+}
+
+
+def parse_checklist_gates(skill: str) -> list:
+    """Parse a skill's checklist into (section, gate_text) pairs. Deterministic."""
     sp = skill_path(skill)
-    if not sp:
-        return {"passed": [], "failed": [], "score": 80}
+    if not sp or not (sp / "checklist.md").exists():
+        return []
+    section, gates = "General", []
+    for line in (sp / "checklist.md").read_text().splitlines():
+        s = line.strip()
+        if s.startswith("## "):
+            section = s[3:].strip()
+        elif s.startswith("- [ ]") or s.startswith("- [x]"):
+            text = s[5:].strip()
+            if text:
+                gates.append((section, text))
+    return gates
 
-    cl = sp / "checklist.md"
-    if not cl.exists():
-        return {"passed": [], "failed": [], "score": 80}
 
-    checklist = cl.read_text()[:2000]
+def _gate_terms(text: str) -> list:
+    """Salient lowercase terms (len>=4, non-stopword) used to detect coverage."""
+    toks = re.split(r"[^a-z0-9]+", text.lower())
+    return [t for t in toks if len(t) >= 4 and t not in _GATE_STOP]
 
-    prompt = f"""You are a quality reviewer for OpenSpec skill documentation.
 
-SKILL: {skill}
-CHECKLIST:
-{checklist}
+def score_checklist_objective(skill: str, spec_content: str) -> dict:
+    """Objective, REPRODUCIBLE checklist score: deterministically check the spec
+    for evidence of each gate (no LLM, so same spec → same score). A gate counts
+    as covered when any of its salient terms appears in the spec text. This is
+    the gate of record — replaces subjective self-grading."""
+    gates = parse_checklist_gates(skill)
+    if not gates:
+        return {"passed": [], "failed": [], "score": 80, "method": "no-checklist"}
+    hay = spec_content.lower()
+    passed, failed = [], []
+    for _section, text in gates:
+        terms = _gate_terms(text)
+        # Un-measurable gates (no salient terms) are not counted against the spec.
+        covered = (not terms) or any(t in hay for t in terms)
+        (passed if covered else failed).append(text)
+    measured = len(passed) + len(failed)
+    score = round(100 * len(passed) / measured) if measured else 80
+    return {"passed": passed, "failed": failed, "score": score,
+            "method": "objective", "gates": measured}
 
-GENERATED SPEC:
-{spec_content[:2000]}
 
-Review the spec against the checklist. Return ONLY valid JSON:
-{{
-  "passed": ["<gate 1>", "<gate 2>"],
-  "failed": ["<gate that failed>"],
-  "score": <integer 0-100>,
-  "improvements": ["<suggestion 1>", "<suggestion 2>"]
-}}"""
+def ai_validate_checklist(skill: str, spec_content: str, llm: dict, quiet: bool = False) -> dict:
+    """Validate a generated spec against the skill checklist. The SCORE is now
+    objective and deterministic (`score_checklist_objective`); the LLM, when
+    available, only adds qualitative improvement hints and never overrides the
+    score — so the gate of record is reproducible, not self-graded."""
+    result = score_checklist_objective(skill, spec_content)
+    # Improvements default to the objectively-failed gates (actionable + free).
+    result["improvements"] = [f"Address: {g}" for g in result["failed"][:6]]
 
-    if not quiet: spinner("AI validating against checklist...")
-    result = call_llm_json(prompt, llm)
-    if not quiet: clear_line()
+    if llm.get("cmd") and result["failed"]:
+        if not quiet: spinner("AI suggesting improvements...")
+        hint = call_llm_json(
+            f"""A spec for the '{skill}' skill is missing coverage of these checklist gates:
+{json.dumps(result['failed'][:8], indent=2)}
 
-    if result and "score" in result:
-        return result
-    return {"passed": ["Spec generated", "Context captured"], "failed": [], "score": 85, "improvements": []}
+Spec excerpt:
+{spec_content[:1500]}
+
+Return ONLY JSON: {{"improvements": ["<concrete fix>", "..."]}}""", llm)
+        if not quiet: clear_line()
+        if hint and isinstance(hint.get("improvements"), list) and hint["improvements"]:
+            result["improvements"] = hint["improvements"][:6]
+    return result
 
 
 def ai_suggest_next(project: dict, llm: dict) -> dict:
@@ -866,7 +914,6 @@ def cmd_do(args):
     confidence = match.get("confidence", 50)
     reason     = match.get("reason", "")
     top3       = match.get("top3", [skill])
-    key_areas  = match.get("key_areas", [])
 
     conf_color = "green" if confidence >= 80 else "yellow" if confidence >= 50 else "red"
     conf_bar   = "█" * (confidence // 10) + "░" * (10 - confidence // 10)
@@ -1067,7 +1114,6 @@ def cmd_audit(args):
         score   = result.get("score", 50)
         rec     = result.get("recommendation", "finetune")
         reason  = result.get("recommendation_reason", "")
-        present = result.get("present_skills", [])
         missing = result.get("missing_skills", [])
         gaps    = result.get("critical_gaps", [])
         strengths = result.get("strengths", [])
