@@ -1612,17 +1612,56 @@ def ensure_openspec_root(ws: Path):
         cfg.write_text("schema: spec-driven\n")
 
 
+def load_playbook_context(skill: str, max_chars: int = 2400) -> str:
+    """Pull the skill's real methodology — focus areas, quality-gate checklist,
+    and a worked example — so the generator is grounded in the playbook instead
+    of a one-line description. This is the domain-correctness lever: the 89
+    playbooks are the IP, and this is what gets them into the prompt."""
+    sp = skill_path(skill)
+    if not sp:
+        return ""
+
+    def section(text: str, heading: str, limit: int) -> str:
+        m = re.search(rf"#+\s*{re.escape(heading)}.*?\n(.+?)(?:\n#+\s|\Z)", text, re.S)
+        return m.group(1).strip()[:limit] if m else ""
+
+    blocks = []
+    sk = sp / "SKILL.md"
+    if sk.exists():
+        txt = sk.read_text()
+        focus = section(txt, "Capabilities & Focus Areas", 700)
+        if focus:
+            blocks.append("FOCUS AREAS (cover these):\n" + focus)
+
+    ck = sp / "checklist.md"
+    if ck.exists():
+        # The Specify/Design gates encode what a correct artifact must contain.
+        gates = "\n".join(l for l in ck.read_text().splitlines()
+                          if l.strip().startswith("- [ ]"))[:900]
+        if gates:
+            blocks.append("QUALITY GATES (the change must satisfy these):\n" + gates)
+
+    ex = sp / "examples.md"
+    if ex.exists():
+        excerpt = ex.read_text().strip()[:700]
+        if excerpt:
+            blocks.append("WORKED EXAMPLE (match this depth/shape):\n" + excerpt)
+
+    return ("\n\n".join(blocks))[:max_chars]
+
+
 def ai_openspec_change_data(skill: str, request: str, project: dict, llm: dict) -> dict:
     """Produce structured change data (LLM-enriched when online). Always
     normalized afterwards so the rendered change is validate-clean."""
     data = {}
     if llm["cmd"]:
         desc = SKILL_DESCRIPTIONS.get(skill, "")
+        playbook = load_playbook_context(skill)
+        playbook_block = f"\n\nPLAYBOOK ({skill}) — ground your change in this methodology:\n{playbook}\n" if playbook else ""
         prompt = f"""You are writing an OpenSpec change for the '{skill}' capability.
 Developer request: "{request}"
 Project: {project.get('name')} ({project.get('type','web')}) — {project.get('idea','')}
-Skill focus: {desc}
-
+Skill focus: {desc}{playbook_block}
 Return ONLY valid JSON with this exact shape:
 {{
   "capability": "<short-kebab-capability-name>",

@@ -281,6 +281,17 @@ class TestHybridOpenSpec(Base):
         self.assertIn("- **THEN**", spec)
         self.assertTrue((u.UGDIR / "workspaces" / "p" / "openspec" / "config.yaml").exists())
 
+    def test_playbook_context_injects_real_methodology(self):
+        # The domain-correctness lever: focus areas + quality gates reach the prompt.
+        ctx = u.load_playbook_context("api-design")
+        self.assertTrue(ctx, "expected playbook context for api-design")
+        self.assertIn("QUALITY GATES", ctx)
+        self.assertIn("- [ ]", ctx)  # real checklist items
+        self.assertLessEqual(len(ctx), 2400)  # bounded
+
+    def test_playbook_context_missing_skill_is_safe(self):
+        self.assertEqual(u.load_playbook_context("does-not-exist"), "")
+
     @unittest.skipUnless(u.openspec_available(), "openspec CLI not installed")
     def test_emitted_change_passes_real_validate(self):
         self.make_project("p")
