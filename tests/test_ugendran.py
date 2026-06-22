@@ -325,7 +325,8 @@ class TestApply(Base):
             "<<<FILE: m.py>>>\ndef add(a,b):\n    return a+b\n<<<END>>>\n"
             '<<<TEST: python3 -c "import m; assert m.add(2,3)==5">>>')
         try:
-            quiet(u.cmd_apply, ["ap", osr["change"], "--path", str(target)])
+            # --no-archive keeps the change in place so we can assert check-off
+            quiet(u.cmd_apply, ["ap", osr["change"], "--path", str(target), "--no-archive"])
         finally:
             u.detect_llm = lambda: OFFLINE_LLM
         self.assertTrue((target / "m.py").exists())
@@ -333,6 +334,47 @@ class TestApply(Base):
         tasks = (u.UGDIR / "workspaces" / "ap" / "openspec" / "changes" / osr["change"] / "tasks.md").read_text()
         self.assertIn("- [x]", tasks)
         self.assertTrue(list(u.ARCHIVE_DIR.glob("ap_apply_*.json")))
+
+    def _run_apply(self, name, request, extra=None):
+        """Helper: emit a change, then apply it with a passing mock build."""
+        proj = self.make_project(name, skills=["api-design"])
+        (u.UGDIR / "workspaces" / name).mkdir(parents=True, exist_ok=True)
+        osr = u.emit_and_validate_openspec("api-design", request, proj, OFFLINE_LLM, name)
+        target = u.UGDIR / "workspaces" / name / "code"
+        u.detect_llm = lambda: {"name": "Mock", "cmd": "mock", "icon": "🧪"}
+        u.call_llm = lambda *a, **k: (
+            "<<<FILE: m.py>>>\ndef add(a,b):\n    return a+b\n<<<END>>>\n"
+            '<<<TEST: python3 -c "import m; assert m.add(2,3)==5">>>')
+        try:
+            quiet(u.cmd_apply, [name, osr["change"], "--path", str(target)] + (extra or []))
+        finally:
+            u.detect_llm = lambda: OFFLINE_LLM
+        return osr["change"]
+
+    @unittest.skipUnless(u.openspec_available(), "openspec CLI not installed")
+    def test_apply_archives_into_living_specs(self):
+        # Green verify → change folds into openspec/specs/ (propose→apply→archive).
+        change = self._run_apply("arch", "add add(a,b)")
+        ws = u.UGDIR / "workspaces" / "arch"
+        # change retired from the active change list
+        self.assertNotIn(change, u.list_changes(ws))
+        # living specs now exist — the single source of truth is updated
+        specs = list((ws / "openspec" / "specs").rglob("spec.md"))
+        self.assertTrue(specs, "expected openspec/specs/*/spec.md after archive")
+        # apply record captures the spec archive result
+        rec = json.loads(sorted(u.ARCHIVE_DIR.glob("arch_apply_*.json"))[-1].read_text())
+        self.assertTrue(rec["spec_archive"]["ran"])
+        self.assertTrue(rec["spec_archive"]["ok"])
+
+    @unittest.skipUnless(u.openspec_available(), "openspec CLI not installed")
+    def test_apply_no_archive_leaves_change_active(self):
+        change = self._run_apply("noar", "add add(a,b)", extra=["--no-archive"])
+        ws = u.UGDIR / "workspaces" / "noar"
+        self.assertIn(change, u.list_changes(ws))
+        self.assertFalse((ws / "openspec" / "specs").exists()
+                         and list((ws / "openspec" / "specs").rglob("spec.md")))
+        rec = json.loads(sorted(u.ARCHIVE_DIR.glob("noar_apply_*.json"))[-1].read_text())
+        self.assertFalse(rec["spec_archive"]["ran"])
 
 
 class TestInstall(Base):

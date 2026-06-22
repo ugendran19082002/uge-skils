@@ -1760,6 +1760,23 @@ def openspec_validate_change(ws: Path, change_name: str) -> tuple:
         return (False, [f"validate error: {e}"])
 
 
+def openspec_archive_change(ws: Path, change_name: str) -> tuple:
+    """Run the REAL `openspec archive <change> -y` — folds the change's spec
+    deltas into the living `openspec/specs/` and retires the change. This is
+    what closes the propose→apply→archive loop and keeps specs the single,
+    always-current source of truth. Returns (archived: bool|None, detail: str)."""
+    if not openspec_available():
+        return (None, "openspec CLI not installed — change left un-archived")
+    try:
+        r = subprocess.run(["openspec", "archive", change_name, "-y"],
+                           cwd=str(ws), capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            return (True, "specs updated")
+        return (False, (r.stderr or r.stdout or "archive failed").strip()[:300])
+    except Exception as e:
+        return (False, f"archive error: {e}")
+
+
 def emit_and_validate_openspec(skill: str, request: str, project: dict, llm: dict,
                                project_name: str, max_fix: int = 2) -> dict:
     """Generate → validate → fix loop for one skill. The fix loop feeds real
@@ -2173,23 +2190,27 @@ Include or update tests so the change is verifiable. After all files, output one
 # ─── CMD: apply ★ implement a validated change + verify ───────────────────────
 def cmd_apply(args):
     """
-    ugendran apply <project> [change] [--path DIR] [--no-verify]
+    ugendran apply <project> [change] [--path DIR] [--no-verify] [--no-archive]
 
     Implement ONE validated OpenSpec change's tasks as real code into a target
-    repo, then run its build/test to VERIFY (measurable pass/fail). Serialized
-    and path-safe. Review the diff afterwards.
+    repo, then run its build/test to VERIFY (measurable pass/fail). When verify
+    is green, archive the change into the living openspec/specs/ (the
+    propose→apply→archive loop) unless --no-archive. Serialized and path-safe.
+    Review the diff afterwards.
     """
-    target_dir, no_verify, positional = None, False, []
+    target_dir, no_verify, no_archive, positional = None, False, False, []
     it = iter(args)
     for a in it:
         if a == "--path":
             target_dir = next(it, None)
         elif a == "--no-verify":
             no_verify = True
+        elif a == "--no-archive":
+            no_archive = True
         else:
             positional.append(a)
     if not positional:
-        print(err('Usage: ugendran apply <project> [change] [--path DIR] [--no-verify]'))
+        print(err('Usage: ugendran apply <project> [change] [--path DIR] [--no-verify] [--no-archive]'))
         return
 
     project_name = positional[0]
@@ -2282,22 +2303,46 @@ def cmd_apply(args):
             print(f"    {dim('no test/build command detected — skipping (use the spec to add one)')}")
         print()
 
+    # archive into living specs — only when the code is VERIFIED green. This
+    # closes propose→apply→archive: the change's deltas fold into openspec/specs/
+    # so the spec set stays the single, always-current source of truth.
+    spec_archive = {"ran": False, "ok": None, "detail": "skipped"}
+    if no_archive:
+        print(step(3, dim("archive skipped (--no-archive)")))
+        print()
+    elif verify["passed"] is True and openspec_available():
+        print(step(3, bold("Archiving into living specs")))
+        archived, detail = openspec_archive_change(ws, change)
+        spec_archive = {"ran": True, "ok": archived, "detail": detail}
+        if archived:
+            print(f"    {ok('openspec specs/ updated — change folded in')}")
+        else:
+            print(f"    {warn('archive did not complete: ' + str(detail))}")
+        print()
+    elif verify["passed"] is not True:
+        print(step(3, dim("archive skipped — code not verified green")))
+        print()
+
     # archive + log
     rec = {"project": project_name, "change": change, "target": str(target),
            "files_written": written, "rejected": rejected,
-           "verify": verify, "applied_at": ts(), "llm": llm["name"]}
+           "verify": verify, "spec_archive": spec_archive,
+           "applied_at": ts(), "llm": llm["name"]}
     af = ARCHIVE_DIR / f"{project_name}_apply_{change}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     af.write_text(json.dumps(rec, indent=2))
     project.setdefault("log", []).append({
         "ts": ts(), "event": "change_applied", "detail": change,
-        "verify": verify["passed"], "files": len(written)})
+        "verify": verify["passed"], "files": len(written),
+        "spec_archived": spec_archive["ok"]})
     save_project(project_name, project)
 
     print(bold("━" * 60))
     vp = verify["passed"]
     verdict = (c("VERIFIED ✓", "green") if vp else
                c("UNVERIFIED ✗", "red") if vp is False else dim("not verified"))
-    print(f"  {len(written)} files · {verdict}")
+    sa = (c("specs updated ✓", "green") if spec_archive["ok"] else
+          c("archive failed", "red") if spec_archive["ok"] is False else dim("specs not archived"))
+    print(f"  {len(written)} files · {verdict} · {sa}")
     print(f"  {dim('Review the diff in:')} {target}")
     print(f"  {dim('Archive:')} {af.name}")
     print(bold("━" * 60))
@@ -2344,7 +2389,7 @@ def main():
         print()
         print(f"  {dim('Other commands:')}")
         for cmd, desc in [
-            ("apply  <name> [change]",  "Implement a validated change as code + verify"),
+            ("apply  <name> [change]",  "Implement a change as code, verify + archive into specs"),
             ("install",                 "Install global `ugendran` command"),
             ("new    <name> <idea>",    "Create project"),
             ("audit  <path> [name]",    "AI audit → continue/finetune/kill"),
